@@ -1,0 +1,10 @@
+/target
+/vendor
+**/*.rs.bk
+*.swp
+*.swo
+*.orig
+*.pdb
+.DS_Store
+Thumbs.db
+.env
