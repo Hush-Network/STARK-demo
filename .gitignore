@@ -1,5 +1,7 @@
 /target
 /vendor
+/pkg
+.vscode/
 **/*.rs.bk
 *.swp
 *.swo

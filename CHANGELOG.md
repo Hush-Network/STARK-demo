@@ -2,12 +2,12 @@
 
 ## 0.1.0 (2026-03-30)
 
-- Payment circuit: 2-in-2-out credential-gated private transfer
-- Credential issuance circuit with Merkle-based issuer authorization
-- Time-window audit circuit (16-slot aggregate proofs)
-- Batch proving for multi-transaction STARK proofs
-- Lifecycle binary: full issuance → payment → audit flow
+- Payment circuit: 2-in-2-out credential-gated private transfer (~44,000 trace columns)
+- Credential issuance circuit with Merkle-based issuer authorization (~13,000 trace columns)
+- Time-window audit circuit: 16-slot aggregate proofs with configurable disclosure
+- Poseidon2 AIR constraints (width-16, domain-separated, S-box as x^2 -> x^4 -> x^5)
+- Depth-20 Merkle path verification (1M+ leaves)
 - WASM bindings for in-browser proving
-- Poseidon252 commitment backend (algebraic, recursion-ready)
-- Depth-20 Merkle trees (1M+ leaves)
-- 44 tests including Plonky3 cross-validation
+- Lifecycle binary: full issuance -> payment -> audit flow
+- Benchmark binary with per-circuit timing
+- 50 tests covering valid proofs, rejection cases, and Poseidon2 AIR correctness
