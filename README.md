@@ -1,5 +1,7 @@
 # Hush Network STARK Demo
 
+[![CI](https://github.com/Hush-Network/stark-demo/actions/workflows/ci.yml/badge.svg)](https://github.com/Hush-Network/stark-demo/actions/workflows/ci.yml)
+
 STARK circuit implementation for [Hush Network](https://hushnetwork.io), a private-by-default stablecoin settlement L1 with built-in compliance. Built on [Stwo](https://github.com/starkware-libs/stwo) (FRI-based STARK prover, Mersenne31 field) with Poseidon2 as the in-circuit hash.
 
 **Live demo:** [demo.hushnetwork.io](https://demo.hushnetwork.io) (generates real STARK proofs in your browser)

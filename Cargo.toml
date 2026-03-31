@@ -12,6 +12,7 @@ categories = ["cryptography"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Pinned to last known-good Stwo rev; bump carefully (API is unstable)
 stwo = { git = "https://github.com/starkware-libs/stwo.git", rev = "75a6b0ac9bcc7101d8658445dded51923ab2586f", features = ["prover"] }
 stwo-constraint-framework = { git = "https://github.com/starkware-libs/stwo.git", rev = "75a6b0ac9bcc7101d8658445dded51923ab2586f", package = "stwo-constraint-framework", features = ["prover"] }
 wasm-bindgen = "0.2"
