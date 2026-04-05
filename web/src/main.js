@@ -55,7 +55,7 @@ const TOUR_STEPS = [
   {
     target: '#send-card',
     title: 'Amount, fee, total',
-    copy: 'The sender sees amount, fee route, and total before sending. Same-asset fees and the HUSH sidecar route both run through the aligned Proposal 5 backend path here.',
+    copy: 'The sender sees amount, fee route, and total before sending. Same-asset fees and the HUSH sidecar route both run through the dual fee model backend path here.',
   },
   {
     target: '#activity-card',
@@ -820,7 +820,7 @@ async function sendPayment() {
     }
     const recipientOwner = (Math.abs(hash) % 90_000) + 10_000;
 
-    pushLog('info', 'Generating Proposal 5 payment bundle in the browser.');
+    pushLog('info', 'Generating dual fee payment bundle in the browser.');
 
     const response = parseRuntimeResponse(dual_fee_submit_demo_payment_json(
       assetId(state.activeAsset),
@@ -938,7 +938,7 @@ async function sendPayment() {
     openSuccessOverlay(txId);
     showToast(`Payment sent to ${recipient}.`, 'success');
   } catch (error) {
-    pushLog('error', `Proposal 5 payment bundle failed: ${error.message}`);
+    pushLog('error', `Dual fee payment bundle failed: ${error.message}`);
     state.isSending = false;
     render();
     showToast(`Payment bundle failed: ${error.message}`, 'error');

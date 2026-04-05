@@ -187,7 +187,7 @@ pub fn dual_fee_review_snapshot() -> DualFeeReviewSnapshot {
                 key: "wallet_onboarding".to_string(),
                 label: "Wallet onboarding and credential activation".to_string(),
                 level: ImplementationLevel::RepresentedOnly,
-                detail: "The demo still simulates setup and credential issuance so the payment path stays focused on Proposal 5 execution support.".to_string(),
+                detail: "The demo still simulates setup and credential issuance so the payment path stays focused on dual fee model execution support.".to_string(),
             },
             ReviewItem {
                 group: "represented_only".to_string(),
@@ -208,7 +208,7 @@ pub fn dual_fee_review_snapshot() -> DualFeeReviewSnapshot {
                 key: "live_network_submission".to_string(),
                 label: "Live validator network path".to_string(),
                 level: ImplementationLevel::NotImplemented,
-                detail: "The demo executes locally and does not yet submit Proposal 5 transactions into a live validator network or finality path.".to_string(),
+                detail: "The demo executes locally and does not yet submit dual fee transactions into a live validator network or finality path.".to_string(),
             },
         ],
     }
