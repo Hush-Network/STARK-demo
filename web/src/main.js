@@ -4,7 +4,7 @@ import init, {
   prove_time_window_audit,
 } from '../pkg/hush_demo_stark.js';
 
-const AMT_SCALE = 1000;
+const AMT_SCALE = 1;
 
 const SK = 12345;
 const CRED_ISSUER = 1;
@@ -25,7 +25,7 @@ const state = {
   feeMode: 'same_asset',
   currentRecipient: DEFAULT_RECIPIENT,
   currentAmountInput: DEFAULT_AMOUNT,
-  balances: { USDC: 2_500_000, USDT: 600_000 },
+  balances: { USDC: 1_500_000, USDT: 500_000 },
   hushBalance: 250,
   activity: [],
   transactions: [],
@@ -695,7 +695,7 @@ window.restartDemo = function restartDemo() {
   state.feeMode = 'same_asset';
   state.currentRecipient = DEFAULT_RECIPIENT;
   state.currentAmountInput = DEFAULT_AMOUNT;
-  state.balances = { USDC: 2_500_000, USDT: 600_000 };
+  state.balances = { USDC: 1_500_000, USDT: 500_000 };
   state.hushBalance = 250;
   state.activity = [];
   state.transactions = [];
