@@ -1,0 +1,35 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_proofoutput_free: (a: number, b: number) => void;
+export const proofoutput_success: (a: number) => number;
+export const proofoutput_message: (a: number, b: number) => void;
+export const proofoutput_verify_time_ms: (a: number) => number;
+export const proofoutput_null_0: (a: number) => number;
+export const proofoutput_null_1: (a: number) => number;
+export const proofoutput_out_cm_0: (a: number) => number;
+export const proofoutput_out_cm_1: (a: number) => number;
+export const proofoutput_cred_null: (a: number) => number;
+export const proofoutput_proof_bytes: (a: number, b: number) => void;
+export const proofoutput_note_root: (a: number) => number;
+export const proofoutput_cred_root: (a: number) => number;
+export const proofoutput_epoch: (a: number) => number;
+export const dual_fee_review_json: (a: number) => void;
+export const dual_fee_quote_payment_json: (a: number, b: number, c: number, d: number) => void;
+export const dual_fee_submit_demo_payment_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
+export const prove_and_verify: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number) => number;
+export const __wbg_auditoutput_free: (a: number, b: number) => void;
+export const auditoutput_success: (a: number) => number;
+export const auditoutput_message: (a: number, b: number) => void;
+export const auditoutput_prove_time_ms: (a: number) => number;
+export const prove_time_window_audit: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => number;
+export const build_witness_and_prove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => number;
+export const verify_serialized_proof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+export const compute_credential_root: (a: number, b: number, c: number, d: number) => number;
+export const compute_note_root: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+export const compute_merkle_path: (a: number, b: number, c: number, d: number) => void;
+export const proofoutput_prove_time_ms: (a: number) => number;
+export const __wbindgen_add_to_stack_pointer: (a: number) => number;
+export const __wbindgen_export: (a: number, b: number, c: number) => void;
+export const __wbindgen_export2: (a: number, b: number) => number;
+export const __wbindgen_export3: (a: number, b: number, c: number, d: number) => number;

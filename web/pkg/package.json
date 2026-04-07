@@ -1,0 +1,27 @@
+{
+  "name": "hush-demo-stark",
+  "type": "module",
+  "description": "STARK circuits for credential-gated private payments",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hush-network/stark-demo"
+  },
+  "files": [
+    "hush_demo_stark_bg.wasm",
+    "hush_demo_stark.js",
+    "hush_demo_stark.d.ts"
+  ],
+  "main": "hush_demo_stark.js",
+  "types": "hush_demo_stark.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ],
+  "keywords": [
+    "stark",
+    "zero-knowledge",
+    "privacy",
+    "payments"
+  ]
+}
