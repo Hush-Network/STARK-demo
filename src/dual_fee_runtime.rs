@@ -1,4 +1,4 @@
-use std::{fmt::Write, time::Instant};
+use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,6 @@ use crate::{
         EpochAccumulator, EpochSettlement, ValidatorBlockParticipation, ValidatorStakeInfo,
     },
     fee_sidecar,
-    measurement::duration_to_ms,
     payment_fixtures::{build_hush_fee_merkle_context, build_payment_merkle_context},
     payment_tx::{
         expected_fee_amount, payment_route, AssetId, NoteInput, PaymentRoute, PaymentTxV1,
@@ -16,6 +15,23 @@ use crate::{
     },
     payment_validation::{self, PaymentBundleProof},
 };
+
+/// Returns the current time in milliseconds. Uses `js_sys::Date` in WASM
+/// (where `std::time::Instant` is not available) and `SystemTime` elsewhere.
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> f64 {
+    js_sys::Date::now()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> f64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1_000.0
+}
 
 const DEMO_SENDER_KEY: u32 = 12_345;
 const DEMO_CRED_ISSUER: u32 = 1;
@@ -252,33 +268,33 @@ pub fn submit_wallet_payment(
 ) -> Result<WalletSubmissionResult, String> {
     let prepared = prepare_wallet_submission(request)?;
 
-    let prove_start = Instant::now();
+    let prove_start = now_ms();
     let bundle = payment_validation::prove_payment_bundle(
         &prepared.tx,
         &prepared.payment_witness,
         prepared.fee_sidecar_witness.as_ref(),
     )?;
-    let prove_time_ms = duration_to_ms(prove_start.elapsed());
+    let prove_time_ms = now_ms() - prove_start;
 
-    let verify_start = Instant::now();
+    let verify_start = now_ms();
     payment_validation::validate_payment_bundle(&prepared.tx, &bundle)?;
-    let verify_time_ms = duration_to_ms(verify_start.elapsed());
+    let verify_time_ms = now_ms() - verify_start;
 
-    let accounting_start = Instant::now();
+    let accounting_start = now_ms();
     let mut block = BlockAccountingBuilder::new(DEMO_BLOCK_HEIGHT, DEMO_PROPOSER_ID);
     block.record_payment_bundle(&prepared.tx, &bundle)?;
     let block_accounting = block.finalize();
     block_accounting.validate()?;
-    let accounting_time_ms = duration_to_ms(accounting_start.elapsed());
+    let accounting_time_ms = now_ms() - accounting_start;
 
-    let settlement_start = Instant::now();
+    let settlement_start = now_ms();
     let validators = demo_validator_set();
     let participation = demo_participation();
     let mut epoch = EpochAccumulator::new(1);
     epoch.apply_block(&block_accounting, &validators, &participation)?;
     let settlement = epoch.close()?;
     let payout_inspection = inspect_claimable_payouts(&settlement)?;
-    let settlement_time_ms = duration_to_ms(settlement_start.elapsed());
+    let settlement_time_ms = now_ms() - settlement_start;
 
     Ok(WalletSubmissionResult {
         accepted: true,
@@ -655,5 +671,58 @@ mod tests {
             review.item("wallet_reward_consumption_ui").map(|item| item.level),
             Some(ImplementationLevel::RepresentedOnly)
         );
+    }
+
+    // Verify the exact balances and amounts the live demo uses stay within
+    // circuit constraints after the AMT_SCALE=1 fix.
+    #[test]
+    fn test_demo_scale_mode_a_usdc() {
+        let request = WalletSubmissionRequest {
+            payment_asset: AssetId::Usdc as u32,
+            fee_asset: AssetId::Usdc as u32,
+            amount: 125_000,
+            recipient_owner: 99_999,
+            payment_balance: 1_500_000,
+            hush_balance: 250,
+            credential_expiry: None,
+        };
+        let result = submit_wallet_payment(&request).expect("Mode A demo scale should succeed");
+        assert_eq!(result.quote.route, "mode_a_same_asset");
+        assert_eq!(result.quote.receiver_amount, 125_000);
+        assert_eq!(result.quote.fee_amount, 5);
+        assert!(result.accepted);
+    }
+
+    #[test]
+    fn test_demo_scale_mode_b_usdt_hush_sidecar() {
+        let request = WalletSubmissionRequest {
+            payment_asset: AssetId::Usdt as u32,
+            fee_asset: AssetId::Hush as u32,
+            amount: 125_000,
+            recipient_owner: 99_999,
+            payment_balance: 500_000,
+            hush_balance: 250,
+            credential_expiry: None,
+        };
+        let result = submit_wallet_payment(&request).expect("Mode B demo scale should succeed");
+        assert_eq!(result.quote.route, "mode_b_hush_sidecar");
+        assert_eq!(result.quote.receiver_amount, 125_000);
+        assert_eq!(result.quote.hush_fee_debit, 5);
+        assert!(result.accepted);
+    }
+
+    #[test]
+    fn test_demo_scale_expired_credential_rejected_by_circuit() {
+        let request = WalletSubmissionRequest {
+            payment_asset: AssetId::Usdc as u32,
+            fee_asset: AssetId::Usdc as u32,
+            amount: 125_000,
+            recipient_owner: 99_999,
+            payment_balance: 1_500_000,
+            hush_balance: 250,
+            credential_expiry: Some(1), // expired: expiry=1 < epoch=1000
+        };
+        let result = submit_wallet_payment(&request);
+        assert!(result.is_err(), "expired credential should fail proof verification");
     }
 }
