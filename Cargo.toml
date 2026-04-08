@@ -41,6 +41,9 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+[features]
+debug_panic = []
+
 [lints.clippy]
 too_many_arguments = "allow"
 needless_range_loop = "allow"

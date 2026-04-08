@@ -163,9 +163,7 @@ impl FrameworkEval for HushPaymentEval {
         // c_prev for k=0 is 0, c_k for k=3 does not exist (enforced directly)
         for k in 0..NUM_LIMBS {
             let c_prev = if k == 0 { E::F::zero() } else { carries[k - 1].clone() };
-            let lhs = in_amt_0[k].clone()
-                + in_amt_1[k].clone()
-                + c_prev
+            let lhs = in_amt_0[k].clone() + in_amt_1[k].clone() + c_prev
                 - out_amt_0[k].clone()
                 - out_amt_1[k].clone()
                 - fee_limbs[k].clone();
@@ -317,7 +315,9 @@ fn compute_carries(witness: &PaymentWitness) -> [i32; NUM_CARRIES] {
     let mut c_prev = 0i32;
     for k in 0..NUM_LIMBS {
         let delta = i32::from(in0[k] as i16) + i32::from(in1[k] as i16) + c_prev
-            - i32::from(out0[k] as i16) - i32::from(out1[k] as i16) - i32::from(fee[k] as i16);
+            - i32::from(out0[k] as i16)
+            - i32::from(out1[k] as i16)
+            - i32::from(fee[k] as i16);
         if k < NUM_CARRIES {
             // delta must be divisible by RADIX
             debug_assert_eq!(delta % (RADIX as i32), 0, "carry not exact at limb {k}");
@@ -369,10 +369,22 @@ pub fn gen_trace(
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
     let out_cm_0 = poseidon2::note_commitment(
-        in_asset, out0_m31[0], out0_m31[1], out0_m31[2], out0_m31[3], out_owner_0, out_rand_0,
+        in_asset,
+        out0_m31[0],
+        out0_m31[1],
+        out0_m31[2],
+        out0_m31[3],
+        out_owner_0,
+        out_rand_0,
     );
     let out_cm_1 = poseidon2::note_commitment(
-        in_asset, out1_m31[0], out1_m31[1], out1_m31[2], out1_m31[3], owner, out_rand_1,
+        in_asset,
+        out1_m31[0],
+        out1_m31[1],
+        out1_m31[2],
+        out1_m31[3],
+        owner,
+        out_rand_1,
     );
 
     let cred_issuer = M31::from(witness.cred_issuer);
@@ -411,26 +423,58 @@ pub fn gen_trace(
     let null1_hash_cols =
         poseidon2_air::gen_hash2_intermediates(sk, in_cm_1, poseidon2::DOMAIN_NULLIFIER);
     let cm0_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-        in_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner, in_rand_0,
+        in_asset,
+        in0_m31[0],
+        in0_m31[1],
+        in0_m31[2],
+        in0_m31[3],
+        owner,
+        in_rand_0,
         poseidon2::DOMAIN_NOTE_CM,
     );
     let cm1_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-        in_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner, in_rand_1,
+        in_asset,
+        in1_m31[0],
+        in1_m31[1],
+        in1_m31[2],
+        in1_m31[3],
+        owner,
+        in_rand_1,
         poseidon2::DOMAIN_NOTE_CM,
     );
     let credcm_hash_cols = poseidon2_air::gen_hash_many_4_intermediates(
-        cred_issuer, owner, cred_expiry, cred_secret, poseidon2::DOMAIN_CRED_CM,
+        cred_issuer,
+        owner,
+        cred_expiry,
+        cred_secret,
+        poseidon2::DOMAIN_CRED_CM,
     );
     let outcm0_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-        in_asset, out0_m31[0], out0_m31[1], out0_m31[2], out0_m31[3], out_owner_0, out_rand_0,
+        in_asset,
+        out0_m31[0],
+        out0_m31[1],
+        out0_m31[2],
+        out0_m31[3],
+        out_owner_0,
+        out_rand_0,
         poseidon2::DOMAIN_NOTE_CM,
     );
     let outcm1_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-        in_asset, out1_m31[0], out1_m31[1], out1_m31[2], out1_m31[3], owner, out_rand_1,
+        in_asset,
+        out1_m31[0],
+        out1_m31[1],
+        out1_m31[2],
+        out1_m31[3],
+        owner,
+        out_rand_1,
         poseidon2::DOMAIN_NOTE_CM,
     );
     let crednull_hash_cols = poseidon2_air::gen_hash_many_4_intermediates(
-        cred_secret, cred_cm, epoch, M31::from(0u32), poseidon2::DOMAIN_CRED_NULL,
+        cred_secret,
+        cred_cm,
+        epoch,
+        M31::from(0u32),
+        poseidon2::DOMAIN_CRED_NULL,
     );
     // Merkle path intermediates
     let note_path_0_data = gen_merkle_path_trace(in_cm_0, &witness.note_path_0);
@@ -439,40 +483,55 @@ pub fn gen_trace(
 
     for r in 0..num_rows {
         let mut col = 0usize;
-        let mut set = |c: &mut usize, val: M31| { cols[*c].set(r, val); *c += 1; };
+        let mut set = |c: &mut usize, val: M31| {
+            cols[*c].set(r, val);
+            *c += 1;
+        };
 
-        set(&mut col, sk);           // 0
-        set(&mut col, owner);        // 1
-        set(&mut col, in_asset);     // 2
-        for &v in &in0_m31 { set(&mut col, v); }  // 3-6
-        set(&mut col, in_rand_0);    // 7
-        for &v in &in1_m31 { set(&mut col, v); }  // 8-11
-        set(&mut col, in_rand_1);    // 12
-        set(&mut col, in_cm_0);      // 13
-        set(&mut col, in_cm_1);      // 14
-        set(&mut col, null_0);       // 15
-        set(&mut col, null_1);       // 16
-        for &v in &out0_m31 { set(&mut col, v); }  // 17-20
-        set(&mut col, out_owner_0);  // 21
-        set(&mut col, out_rand_0);   // 22
-        for &v in &out1_m31 { set(&mut col, v); }  // 23-26
-        set(&mut col, out_rand_1);   // 27
-        for &v in &fee_m31 { set(&mut col, v); }   // 28-31
-        set(&mut col, out_cm_0);     // 32
-        set(&mut col, out_cm_1);     // 33
-        set(&mut col, cred_issuer);  // 34
-        set(&mut col, cred_expiry);  // 35
-        set(&mut col, cred_secret);  // 36
-        set(&mut col, cred_cm);      // 37
-        set(&mut col, cred_null);    // 38
-        set(&mut col, epoch);        // 39
-        set(&mut col, pub_note_root);// 40
-        set(&mut col, pub_cred_root);// 41
-        // Auxiliary
-        set(&mut col, null_diff_inv);// 42
-        set(&mut col, expiry_diff);  // 43
-        for i in 0..16 { set(&mut col, expiry_bits[i]); } // 44-59
-        // Carry bits
+        set(&mut col, sk); // 0
+        set(&mut col, owner); // 1
+        set(&mut col, in_asset); // 2
+        for &v in &in0_m31 {
+            set(&mut col, v);
+        } // 3-6
+        set(&mut col, in_rand_0); // 7
+        for &v in &in1_m31 {
+            set(&mut col, v);
+        } // 8-11
+        set(&mut col, in_rand_1); // 12
+        set(&mut col, in_cm_0); // 13
+        set(&mut col, in_cm_1); // 14
+        set(&mut col, null_0); // 15
+        set(&mut col, null_1); // 16
+        for &v in &out0_m31 {
+            set(&mut col, v);
+        } // 17-20
+        set(&mut col, out_owner_0); // 21
+        set(&mut col, out_rand_0); // 22
+        for &v in &out1_m31 {
+            set(&mut col, v);
+        } // 23-26
+        set(&mut col, out_rand_1); // 27
+        for &v in &fee_m31 {
+            set(&mut col, v);
+        } // 28-31
+        set(&mut col, out_cm_0); // 32
+        set(&mut col, out_cm_1); // 33
+        set(&mut col, cred_issuer); // 34
+        set(&mut col, cred_expiry); // 35
+        set(&mut col, cred_secret); // 36
+        set(&mut col, cred_cm); // 37
+        set(&mut col, cred_null); // 38
+        set(&mut col, epoch); // 39
+        set(&mut col, pub_note_root); // 40
+        set(&mut col, pub_cred_root); // 41
+                                      // Auxiliary
+        set(&mut col, null_diff_inv); // 42
+        set(&mut col, expiry_diff); // 43
+        for i in 0..16 {
+            set(&mut col, expiry_bits[i]);
+        } // 44-59
+          // Carry bits
         for k in 0..NUM_CARRIES {
             for b in 0..CARRY_BITS {
                 set(&mut col, carry_bits[k][b]);
@@ -591,9 +650,13 @@ pub struct ProofResult {
 pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
     let log_num_rows = LOG_N_LANES;
 
-    let total_in = witness.in_amt_0.checked_add(witness.in_amt_1)
+    let total_in = witness
+        .in_amt_0
+        .checked_add(witness.in_amt_1)
         .ok_or_else(|| "input amount overflow".to_string())?;
-    let total_out = witness.out_amt_0.checked_add(witness.out_amt_1)
+    let total_out = witness
+        .out_amt_0
+        .checked_add(witness.out_amt_1)
         .and_then(|v| v.checked_add(witness.payment_fee_amount))
         .ok_or_else(|| "output amount overflow".to_string())?;
     if total_in != total_out {
@@ -615,8 +678,18 @@ pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
     let sk = M31::from(witness.sk);
     let owner = poseidon2::derive_owner(sk);
     let in_asset = M31::from(witness.in_asset);
-    let in_cm_0 = poseidon2::note_commitment_u64(in_asset, witness.in_amt_0, owner, M31::from(witness.in_rand_0));
-    let in_cm_1 = poseidon2::note_commitment_u64(in_asset, witness.in_amt_1, owner, M31::from(witness.in_rand_1));
+    let in_cm_0 = poseidon2::note_commitment_u64(
+        in_asset,
+        witness.in_amt_0,
+        owner,
+        M31::from(witness.in_rand_0),
+    );
+    let in_cm_1 = poseidon2::note_commitment_u64(
+        in_asset,
+        witness.in_amt_1,
+        owner,
+        M31::from(witness.in_rand_1),
+    );
 
     // Verify Merkle paths
     let note_root = M31::from(witness.note_root);
@@ -666,7 +739,8 @@ pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
             witness.tx_binding_hash, expected_binding_hash
         ));
     }
-    let expected_sender_binding_tag = derive_sender_binding_tag(witness.sk, witness.tx_binding_hash);
+    let expected_sender_binding_tag =
+        derive_sender_binding_tag(witness.sk, witness.tx_binding_hash);
     if witness.sender_binding_tag != expected_sender_binding_tag {
         return Err(format!(
             "sender_binding_tag mismatch: witness {}, expected {}",
@@ -678,10 +752,16 @@ pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
     let out_cm_0 = poseidon2::note_commitment_u64(
-        in_asset, witness.out_amt_0, M31::from(witness.out_owner_0), M31::from(witness.out_rand_0),
+        in_asset,
+        witness.out_amt_0,
+        M31::from(witness.out_owner_0),
+        M31::from(witness.out_rand_0),
     );
     let out_cm_1 = poseidon2::note_commitment_u64(
-        in_asset, witness.out_amt_1, owner, M31::from(witness.out_rand_1),
+        in_asset,
+        witness.out_amt_1,
+        owner,
+        M31::from(witness.out_rand_1),
     );
     let cred_null = poseidon2::credential_nullifier(
         M31::from(witness.cred_secret),
@@ -767,9 +847,13 @@ pub struct BatchProofResult {
 }
 
 fn validate_witness(witness: &PaymentWitness) -> Result<PaymentPublicData, String> {
-    let total_in = witness.in_amt_0.checked_add(witness.in_amt_1)
+    let total_in = witness
+        .in_amt_0
+        .checked_add(witness.in_amt_1)
         .ok_or_else(|| "input amount overflow".to_string())?;
-    let total_out = witness.out_amt_0.checked_add(witness.out_amt_1)
+    let total_out = witness
+        .out_amt_0
+        .checked_add(witness.out_amt_1)
         .and_then(|v| v.checked_add(witness.payment_fee_amount))
         .ok_or_else(|| "output amount overflow".to_string())?;
     if total_in != total_out {
@@ -787,8 +871,18 @@ fn validate_witness(witness: &PaymentWitness) -> Result<PaymentPublicData, Strin
     let sk = M31::from(witness.sk);
     let owner = poseidon2::derive_owner(sk);
     let in_asset = M31::from(witness.in_asset);
-    let in_cm_0 = poseidon2::note_commitment_u64(in_asset, witness.in_amt_0, owner, M31::from(witness.in_rand_0));
-    let in_cm_1 = poseidon2::note_commitment_u64(in_asset, witness.in_amt_1, owner, M31::from(witness.in_rand_1));
+    let in_cm_0 = poseidon2::note_commitment_u64(
+        in_asset,
+        witness.in_amt_0,
+        owner,
+        M31::from(witness.in_rand_0),
+    );
+    let in_cm_1 = poseidon2::note_commitment_u64(
+        in_asset,
+        witness.in_amt_1,
+        owner,
+        M31::from(witness.in_rand_1),
+    );
 
     let note_root = M31::from(witness.note_root);
     let note_path_0: Vec<(M31, u32)> =
@@ -834,7 +928,8 @@ fn validate_witness(witness: &PaymentWitness) -> Result<PaymentPublicData, Strin
             witness.tx_binding_hash, expected_binding_hash
         ));
     }
-    let expected_sender_binding_tag = derive_sender_binding_tag(witness.sk, witness.tx_binding_hash);
+    let expected_sender_binding_tag =
+        derive_sender_binding_tag(witness.sk, witness.tx_binding_hash);
     if witness.sender_binding_tag != expected_sender_binding_tag {
         return Err(format!(
             "sender_binding_tag mismatch: witness {}, expected {}",
@@ -845,10 +940,16 @@ fn validate_witness(witness: &PaymentWitness) -> Result<PaymentPublicData, Strin
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
     let out_cm_0 = poseidon2::note_commitment_u64(
-        in_asset, witness.out_amt_0, M31::from(witness.out_owner_0), M31::from(witness.out_rand_0),
+        in_asset,
+        witness.out_amt_0,
+        M31::from(witness.out_owner_0),
+        M31::from(witness.out_rand_0),
     );
     let out_cm_1 = poseidon2::note_commitment_u64(
-        in_asset, witness.out_amt_1, owner, M31::from(witness.out_rand_1),
+        in_asset,
+        witness.out_amt_1,
+        owner,
+        M31::from(witness.out_rand_1),
     );
     let cred_null = poseidon2::credential_nullifier(
         M31::from(witness.cred_secret),
@@ -911,10 +1012,22 @@ fn gen_trace_batch(
         let null_0 = poseidon2::nullifier(sk, in_cm_0);
         let null_1 = poseidon2::nullifier(sk, in_cm_1);
         let out_cm_0 = poseidon2::note_commitment(
-            in_asset, out0_m31[0], out0_m31[1], out0_m31[2], out0_m31[3], out_owner_0, out_rand_0,
+            in_asset,
+            out0_m31[0],
+            out0_m31[1],
+            out0_m31[2],
+            out0_m31[3],
+            out_owner_0,
+            out_rand_0,
         );
         let out_cm_1 = poseidon2::note_commitment(
-            in_asset, out1_m31[0], out1_m31[1], out1_m31[2], out1_m31[3], owner, out_rand_1,
+            in_asset,
+            out1_m31[0],
+            out1_m31[1],
+            out1_m31[2],
+            out1_m31[3],
+            owner,
+            out_rand_1,
         );
         let cred_issuer = M31::from(w.cred_issuer);
         let cred_expiry = M31::from(w.cred_expiry);
@@ -952,66 +1065,113 @@ fn gen_trace_batch(
         let null1_hash_cols =
             poseidon2_air::gen_hash2_intermediates(sk, in_cm_1, poseidon2::DOMAIN_NULLIFIER);
         let cm0_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-            in_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner, in_rand_0,
+            in_asset,
+            in0_m31[0],
+            in0_m31[1],
+            in0_m31[2],
+            in0_m31[3],
+            owner,
+            in_rand_0,
             poseidon2::DOMAIN_NOTE_CM,
         );
         let cm1_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-            in_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner, in_rand_1,
+            in_asset,
+            in1_m31[0],
+            in1_m31[1],
+            in1_m31[2],
+            in1_m31[3],
+            owner,
+            in_rand_1,
             poseidon2::DOMAIN_NOTE_CM,
         );
         let credcm_hash_cols = poseidon2_air::gen_hash_many_4_intermediates(
-            cred_issuer, owner, cred_expiry, cred_secret, poseidon2::DOMAIN_CRED_CM,
+            cred_issuer,
+            owner,
+            cred_expiry,
+            cred_secret,
+            poseidon2::DOMAIN_CRED_CM,
         );
         let outcm0_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-            in_asset, out0_m31[0], out0_m31[1], out0_m31[2], out0_m31[3], out_owner_0, out_rand_0,
+            in_asset,
+            out0_m31[0],
+            out0_m31[1],
+            out0_m31[2],
+            out0_m31[3],
+            out_owner_0,
+            out_rand_0,
             poseidon2::DOMAIN_NOTE_CM,
         );
         let outcm1_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-            in_asset, out1_m31[0], out1_m31[1], out1_m31[2], out1_m31[3], owner, out_rand_1,
+            in_asset,
+            out1_m31[0],
+            out1_m31[1],
+            out1_m31[2],
+            out1_m31[3],
+            owner,
+            out_rand_1,
             poseidon2::DOMAIN_NOTE_CM,
         );
         let crednull_hash_cols = poseidon2_air::gen_hash_many_4_intermediates(
-            cred_secret, cred_cm, epoch, M31::from(0u32), poseidon2::DOMAIN_CRED_NULL,
+            cred_secret,
+            cred_cm,
+            epoch,
+            M31::from(0u32),
+            poseidon2::DOMAIN_CRED_NULL,
         );
         let note_path_0_data = gen_merkle_path_trace(in_cm_0, &w.note_path_0);
         let note_path_1_data = gen_merkle_path_trace(in_cm_1, &w.note_path_1);
         let cred_path_data = gen_merkle_path_trace(cred_cm, &w.cred_path);
 
         let mut col = 0usize;
-        let mut set = |c: &mut usize, val: M31| { cols[*c].set(r, val); *c += 1; };
+        let mut set = |c: &mut usize, val: M31| {
+            cols[*c].set(r, val);
+            *c += 1;
+        };
 
-        set(&mut col, sk);           // 0
-        set(&mut col, owner);        // 1
-        set(&mut col, in_asset);     // 2
-        for &v in &in0_m31 { set(&mut col, v); }  // 3-6
-        set(&mut col, in_rand_0);    // 7
-        for &v in &in1_m31 { set(&mut col, v); }  // 8-11
-        set(&mut col, in_rand_1);    // 12
-        set(&mut col, in_cm_0);      // 13
-        set(&mut col, in_cm_1);      // 14
-        set(&mut col, null_0);       // 15
-        set(&mut col, null_1);       // 16
-        for &v in &out0_m31 { set(&mut col, v); }  // 17-20
-        set(&mut col, out_owner_0);  // 21
-        set(&mut col, out_rand_0);   // 22
-        for &v in &out1_m31 { set(&mut col, v); }  // 23-26
-        set(&mut col, out_rand_1);   // 27
-        for &v in &fee_m31 { set(&mut col, v); }   // 28-31
-        set(&mut col, out_cm_0);     // 32
-        set(&mut col, out_cm_1);     // 33
-        set(&mut col, cred_issuer);  // 34
-        set(&mut col, cred_expiry);  // 35
-        set(&mut col, cred_secret);  // 36
-        set(&mut col, cred_cm);      // 37
-        set(&mut col, cred_null);    // 38
-        set(&mut col, epoch);        // 39
-        set(&mut col, pub_note_root);// 40
-        set(&mut col, pub_cred_root);// 41
-        // Auxiliary
-        set(&mut col, null_diff_inv);// 42
-        set(&mut col, expiry_diff);  // 43
-        for i in 0..16 { set(&mut col, expiry_bits[i]); } // 44-59
-        // Carry bits
+        set(&mut col, sk); // 0
+        set(&mut col, owner); // 1
+        set(&mut col, in_asset); // 2
+        for &v in &in0_m31 {
+            set(&mut col, v);
+        } // 3-6
+        set(&mut col, in_rand_0); // 7
+        for &v in &in1_m31 {
+            set(&mut col, v);
+        } // 8-11
+        set(&mut col, in_rand_1); // 12
+        set(&mut col, in_cm_0); // 13
+        set(&mut col, in_cm_1); // 14
+        set(&mut col, null_0); // 15
+        set(&mut col, null_1); // 16
+        for &v in &out0_m31 {
+            set(&mut col, v);
+        } // 17-20
+        set(&mut col, out_owner_0); // 21
+        set(&mut col, out_rand_0); // 22
+        for &v in &out1_m31 {
+            set(&mut col, v);
+        } // 23-26
+        set(&mut col, out_rand_1); // 27
+        for &v in &fee_m31 {
+            set(&mut col, v);
+        } // 28-31
+        set(&mut col, out_cm_0); // 32
+        set(&mut col, out_cm_1); // 33
+        set(&mut col, cred_issuer); // 34
+        set(&mut col, cred_expiry); // 35
+        set(&mut col, cred_secret); // 36
+        set(&mut col, cred_cm); // 37
+        set(&mut col, cred_null); // 38
+        set(&mut col, epoch); // 39
+        set(&mut col, pub_note_root); // 40
+        set(&mut col, pub_cred_root); // 41
+                                      // Auxiliary
+        set(&mut col, null_diff_inv); // 42
+        set(&mut col, expiry_diff); // 43
+        for i in 0..16 {
+            set(&mut col, expiry_bits[i]);
+        } // 44-59
+          // Carry bits
         for k in 0..NUM_CARRIES {
             for b in 0..CARRY_BITS {
                 set(&mut col, carry_bits[k][b]);
@@ -1229,7 +1389,9 @@ mod tests {
         let mut witness = valid_witness();
         witness.fee_amount += 1;
         match prove_payment(&witness) {
-            Err(e) => assert!(e.contains("Balance conservation failed") || e.contains("tx_binding_hash mismatch")),
+            Err(e) => assert!(
+                e.contains("Balance conservation failed") || e.contains("tx_binding_hash mismatch")
+            ),
             Ok(_) => panic!("Should have rejected wrong fee amount"),
         }
     }
@@ -1271,7 +1433,11 @@ mod tests {
                 NoteInput { amount: u64::from(amt_0), randomness: rand_0 },
                 NoteInput { amount: u64::from(amt_1), randomness: rand_1 },
             ],
-            RecipientIntent { amount: u64::from(out_split), owner: 99_999, randomness: rand_0 + 1_000 },
+            RecipientIntent {
+                amount: u64::from(out_split),
+                owner: 99_999,
+                randomness: rand_0 + 1_000,
+            },
             rand_1 + 1_000,
             sk_val,
         )
@@ -1320,14 +1486,14 @@ mod tests {
             in_rand_0: rand_0,
             in_amt_1: u64::from(amt_1),
             in_rand_1: rand_1,
-            out_amt_0: u64::from(tx.recipient.amount),
+            out_amt_0: tx.recipient.amount,
             out_owner_0: tx.recipient.owner,
             out_rand_0: tx.recipient.randomness,
-            out_amt_1: u64::from(tx.sender_change.amount),
+            out_amt_1: tx.sender_change.amount,
             out_rand_1: tx.sender_change.randomness,
-            payment_fee_amount: u64::from(tx.descriptor.fee_amount),
+            payment_fee_amount: tx.descriptor.fee_amount,
             binding_fee_asset: tx.descriptor.fee_asset,
-            fee_amount: u64::from(tx.descriptor.fee_amount),
+            fee_amount: tx.descriptor.fee_amount,
             fee_class: tx.descriptor.fee_class,
             replay_domain: PAYMENT_TX_V1_REPLAY_DOMAIN,
             tx_binding_hash: tx.tx_binding_hash,

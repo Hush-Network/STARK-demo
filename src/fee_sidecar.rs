@@ -125,9 +125,7 @@ impl FrameworkEval for HushFeeSidecarEval {
         // For k = 0..3: in0[k] + in1[k] + c_prev - change[k] - fee[k] - c_k * R = 0
         for k in 0..NUM_LIMBS {
             let c_prev = if k == 0 { E::F::zero() } else { carries[k - 1].clone() };
-            let lhs = in_amt_0[k].clone()
-                + in_amt_1[k].clone()
-                + c_prev
+            let lhs = in_amt_0[k].clone() + in_amt_1[k].clone() + c_prev
                 - change_amt[k].clone()
                 - fee_limbs[k].clone();
             if k < NUM_CARRIES {
@@ -244,7 +242,7 @@ impl HushFeePublicData {
         channel.mix_u64(self.note_root as u64);
         channel.mix_u64(self.tx_binding_hash as u64);
         channel.mix_u64(self.sender_binding_tag as u64);
-        channel.mix_u64(self.fee_amount as u64);
+        channel.mix_u64(self.fee_amount);
         channel.mix_u64(self.null_0 as u64);
         channel.mix_u64(self.null_1 as u64);
         channel.mix_u64(self.change_cm as u64);
@@ -291,9 +289,14 @@ fn compute_fee_carries(witness: &HushFeeWitness) -> [i32; NUM_CARRIES] {
     let mut c_prev = 0i32;
     for k in 0..NUM_LIMBS {
         let delta = i32::from(in0[k] as i16) + i32::from(in1[k] as i16) + c_prev
-            - i32::from(ch[k] as i16) - i32::from(fee[k] as i16);
+            - i32::from(ch[k] as i16)
+            - i32::from(fee[k] as i16);
         if k < NUM_CARRIES {
-            debug_assert_eq!(delta % (crate::types::RADIX as i32), 0, "carry not exact at limb {k}");
+            debug_assert_eq!(
+                delta % (crate::types::RADIX as i32),
+                0,
+                "carry not exact at limb {k}"
+            );
             carries[k] = delta / (crate::types::RADIX as i32);
             c_prev = carries[k];
         } else {
@@ -338,7 +341,13 @@ fn gen_trace(
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
     let change_cm = poseidon2::note_commitment(
-        hush_asset, ch_m31[0], ch_m31[1], ch_m31[2], ch_m31[3], owner, change_rand,
+        hush_asset,
+        ch_m31[0],
+        ch_m31[1],
+        ch_m31[2],
+        ch_m31[3],
+        owner,
+        change_rand,
     );
     let pub_note_root = M31::from(witness.note_root);
     let null_diff = null_0 - null_1;
@@ -360,15 +369,33 @@ fn gen_trace(
     let null1_hash_cols =
         poseidon2_air::gen_hash2_intermediates(sk, in_cm_1, poseidon2::DOMAIN_NULLIFIER);
     let cm0_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-        hush_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner, in_rand_0,
+        hush_asset,
+        in0_m31[0],
+        in0_m31[1],
+        in0_m31[2],
+        in0_m31[3],
+        owner,
+        in_rand_0,
         poseidon2::DOMAIN_NOTE_CM,
     );
     let cm1_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-        hush_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner, in_rand_1,
+        hush_asset,
+        in1_m31[0],
+        in1_m31[1],
+        in1_m31[2],
+        in1_m31[3],
+        owner,
+        in_rand_1,
         poseidon2::DOMAIN_NOTE_CM,
     );
     let change_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
-        hush_asset, ch_m31[0], ch_m31[1], ch_m31[2], ch_m31[3], owner, change_rand,
+        hush_asset,
+        ch_m31[0],
+        ch_m31[1],
+        ch_m31[2],
+        ch_m31[3],
+        owner,
+        change_rand,
         poseidon2::DOMAIN_NOTE_CM,
     );
     let note_path_0_data = gen_merkle_path_trace(in_cm_0, &witness.note_path_0);
@@ -376,25 +403,36 @@ fn gen_trace(
 
     for r in 0..num_rows {
         let mut col = 0usize;
-        let mut set = |c: &mut usize, val: M31| { cols[*c].set(r, val); *c += 1; };
+        let mut set = |c: &mut usize, val: M31| {
+            cols[*c].set(r, val);
+            *c += 1;
+        };
 
-        set(&mut col, sk);           // 0
-        set(&mut col, owner);        // 1
-        for &v in &in0_m31 { set(&mut col, v); }  // 2-5
-        set(&mut col, in_rand_0);    // 6
-        for &v in &in1_m31 { set(&mut col, v); }  // 7-10
-        set(&mut col, in_rand_1);    // 11
-        set(&mut col, in_cm_0);      // 12
-        set(&mut col, in_cm_1);      // 13
-        set(&mut col, null_0);       // 14
-        set(&mut col, null_1);       // 15
-        for &v in &ch_m31 { set(&mut col, v); }   // 16-19
-        set(&mut col, change_rand);  // 20
-        for &v in &fee_m31 { set(&mut col, v); }   // 21-24
-        set(&mut col, change_cm);    // 25
-        set(&mut col, pub_note_root);// 26
-        set(&mut col, null_diff_inv);// 27
-        // Carry bits
+        set(&mut col, sk); // 0
+        set(&mut col, owner); // 1
+        for &v in &in0_m31 {
+            set(&mut col, v);
+        } // 2-5
+        set(&mut col, in_rand_0); // 6
+        for &v in &in1_m31 {
+            set(&mut col, v);
+        } // 7-10
+        set(&mut col, in_rand_1); // 11
+        set(&mut col, in_cm_0); // 12
+        set(&mut col, in_cm_1); // 13
+        set(&mut col, null_0); // 14
+        set(&mut col, null_1); // 15
+        for &v in &ch_m31 {
+            set(&mut col, v);
+        } // 16-19
+        set(&mut col, change_rand); // 20
+        for &v in &fee_m31 {
+            set(&mut col, v);
+        } // 21-24
+        set(&mut col, change_cm); // 25
+        set(&mut col, pub_note_root); // 26
+        set(&mut col, null_diff_inv); // 27
+                                      // Carry bits
         for k in 0..NUM_CARRIES {
             for b in 0..CARRY_BITS {
                 set(&mut col, carry_bits[k][b]);
@@ -446,9 +484,13 @@ fn gen_trace(
 }
 
 fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, String> {
-    let total_in = witness.in_amt_0.checked_add(witness.in_amt_1)
+    let total_in = witness
+        .in_amt_0
+        .checked_add(witness.in_amt_1)
         .ok_or_else(|| "HUSH fee input amount overflow".to_string())?;
-    let total_out = witness.change_amt.checked_add(witness.fee_amount)
+    let total_out = witness
+        .change_amt
+        .checked_add(witness.fee_amount)
         .ok_or_else(|| "HUSH fee output amount overflow".to_string())?;
     if total_in != total_out {
         return Err(format!(
@@ -456,7 +498,8 @@ fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, Strin
         ));
     }
 
-    let expected_sender_binding_tag = derive_sender_binding_tag(witness.sk, witness.tx_binding_hash);
+    let expected_sender_binding_tag =
+        derive_sender_binding_tag(witness.sk, witness.tx_binding_hash);
     if witness.sender_binding_tag != expected_sender_binding_tag {
         return Err(format!(
             "sender_binding_tag mismatch: witness {}, expected {}",
@@ -468,10 +511,16 @@ fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, Strin
     let owner = poseidon2::derive_owner(sk);
     let hush_asset = M31::from(AssetId::Hush as u32);
     let in_cm_0 = poseidon2::note_commitment_u64(
-        hush_asset, witness.in_amt_0, owner, M31::from(witness.in_rand_0),
+        hush_asset,
+        witness.in_amt_0,
+        owner,
+        M31::from(witness.in_rand_0),
     );
     let in_cm_1 = poseidon2::note_commitment_u64(
-        hush_asset, witness.in_amt_1, owner, M31::from(witness.in_rand_1),
+        hush_asset,
+        witness.in_amt_1,
+        owner,
+        M31::from(witness.in_rand_1),
     );
 
     let note_root = M31::from(witness.note_root);
@@ -489,7 +538,10 @@ fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, Strin
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
     let change_cm = poseidon2::note_commitment_u64(
-        hush_asset, witness.change_amt, owner, M31::from(witness.change_rand),
+        hush_asset,
+        witness.change_amt,
+        owner,
+        M31::from(witness.change_rand),
     );
 
     Ok(HushFeePublicData {
@@ -563,7 +615,7 @@ pub fn verify_hush_fee(result: &ProofResult) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::payment_fixtures::{
-        invalid_hush_change_fixture, insufficient_hush_fee_coverage_fixture,
+        insufficient_hush_fee_coverage_fixture, invalid_hush_change_fixture,
         valid_usdc_hush_fee_fixture, valid_usdt_hush_fee_fixture,
         wrong_sender_binding_tag_hush_fee_fixture, wrong_tx_binding_hash_hush_fee_fixture,
     };

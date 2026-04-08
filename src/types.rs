@@ -88,7 +88,17 @@ mod tests {
 
     #[test]
     fn test_amount_limb_roundtrip() {
-        let cases: &[u64] = &[0, 1, 50, 32767, 32768, 1_000_000, 1_250_000_000, 40_000_000_000_000, (1u64 << 60) - 1];
+        let cases: &[u64] = &[
+            0,
+            1,
+            50,
+            32767,
+            32768,
+            1_000_000,
+            1_250_000_000,
+            40_000_000_000_000,
+            (1u64 << 60) - 1,
+        ];
         for &amount in cases {
             let limbs = amount_to_limbs(amount);
             assert_eq!(limbs_to_amount(limbs), amount, "roundtrip failed for {amount}");
@@ -102,6 +112,8 @@ mod tests {
     fn test_radix_squared_fits_m31() {
         // R^2 = 32768^2 = 1,073,741,824 < p = 2,147,483,647. This is critical for
         // M31 field safety: RADIX can be used as a field constant without wrapping.
-        assert!((RADIX * RADIX) < (1u64 << 31) - 1);
+        let r2 = RADIX * RADIX;
+        let p = (1u64 << 31) - 1;
+        assert!(r2 < p, "R^2 = {r2} must be < p = {p}");
     }
 }
