@@ -12,6 +12,34 @@ pub fn format_duration_ms(duration_ms: f64) -> String {
     }
 }
 
+/// Platform-agnostic timer. Returns elapsed milliseconds as f64.
+/// Uses js_sys::Date on WASM (where std::time::Instant is unavailable),
+/// std::time::Instant on native.
+pub struct Timer {
+    #[cfg(not(target_arch = "wasm32"))]
+    start: std::time::Instant,
+    #[cfg(target_arch = "wasm32")]
+    start_ms: f64,
+}
+
+impl Timer {
+    pub fn start() -> Self {
+        Timer {
+            #[cfg(not(target_arch = "wasm32"))]
+            start: std::time::Instant::now(),
+            #[cfg(target_arch = "wasm32")]
+            start_ms: js_sys::Date::now(),
+        }
+    }
+
+    pub fn elapsed_ms(&self) -> f64 {
+        #[cfg(not(target_arch = "wasm32"))]
+        return duration_to_ms(self.start.elapsed());
+        #[cfg(target_arch = "wasm32")]
+        return js_sys::Date::now() - self.start_ms;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

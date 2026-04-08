@@ -324,6 +324,45 @@ pub fn constrain_hash_many_4<E: EvalAtRow>(
     output[0].clone()
 }
 
+pub fn gen_hash_many_7_intermediates(
+    i0: M31, i1: M31, i2: M31, i3: M31, i4: M31, i5: M31, i6: M31, domain: u32,
+) -> Vec<M31> {
+    let mut input = [M31::from(0u32); WIDTH];
+    input[0] = i0;
+    input[1] = i1;
+    input[2] = i2;
+    input[3] = i3;
+    input[4] = i4;
+    input[5] = i5;
+    input[6] = i6;
+    input[RATE] = M31::from(domain);
+    gen_permutation_intermediates(&input)
+}
+
+pub fn constrain_hash_many_7<E: EvalAtRow>(
+    eval: &mut E,
+    i0: E::F,
+    i1: E::F,
+    i2: E::F,
+    i3: E::F,
+    i4: E::F,
+    i5: E::F,
+    i6: E::F,
+    domain: u32,
+) -> E::F {
+    let mut input = core::array::from_fn(|_| E::F::zero());
+    input[0] = i0;
+    input[1] = i1;
+    input[2] = i2;
+    input[3] = i3;
+    input[4] = i4;
+    input[5] = i5;
+    input[6] = i6;
+    input[RATE] = E::F::from(M31::from(domain));
+    let output = constrain_permutation(eval, input);
+    output[0].clone()
+}
+
 // Standalone hash2 prove/verify, only used in tests.
 #[cfg(test)]
 use stwo::core::air::Component;

@@ -1,5 +1,6 @@
 use crate::{
-    circuit, fee_sidecar,
+    circuit,
+    fee_sidecar,
     payment_tx::{validate_payment_tx, PaymentRoute, PaymentTxV1},
     types::{HushFeeWitness, PaymentWitness},
 };
@@ -32,10 +33,7 @@ pub fn prove_payment_bundle(
     Ok(bundle)
 }
 
-pub fn validate_payment_bundle(
-    tx: &PaymentTxV1,
-    bundle: &PaymentBundleProof,
-) -> Result<(), String> {
+pub fn validate_payment_bundle(tx: &PaymentTxV1, bundle: &PaymentBundleProof) -> Result<(), String> {
     let route = validate_payment_tx(tx)?;
 
     circuit::verify_payment(&bundle.payment)?;
@@ -81,15 +79,13 @@ pub fn validate_payment_bundle(
                 ));
             }
             if bundle.payment.public_data.tx_binding_hash != sidecar.public_data.tx_binding_hash {
-                return Err(
-                    "payment proof and sidecar proof tx_binding_hash do not match".to_string()
-                );
+                return Err("payment proof and sidecar proof tx_binding_hash do not match".to_string());
             }
             if bundle.payment.public_data.sender_binding_tag
                 != sidecar.public_data.sender_binding_tag
             {
                 return Err(
-                    "payment proof and sidecar proof sender_binding_tag do not match".to_string()
+                    "payment proof and sidecar proof sender_binding_tag do not match".to_string(),
                 );
             }
             Ok(())
@@ -103,8 +99,8 @@ mod tests {
     use crate::{
         payment_fixtures::{
             malformed_sidecar_hush_fee_fixture, missing_sidecar_hush_fee_fixture,
-            valid_usdc_hush_fee_fixture, valid_usdc_same_asset_fixture,
-            valid_usdt_hush_fee_fixture, valid_usdt_same_asset_fixture,
+            valid_usdc_hush_fee_fixture, valid_usdc_same_asset_fixture, valid_usdt_hush_fee_fixture,
+            valid_usdt_same_asset_fixture,
         },
         payment_tx::{AssetId, FeeAuxProofDescriptor},
     };
@@ -166,10 +162,12 @@ mod tests {
         let usdc_hush = valid_usdc_hush_fee_fixture();
         let usdt_hush = valid_usdt_hush_fee_fixture();
 
-        let payment =
-            circuit::prove_payment(&usdc_hush.witness).expect("payment proof should succeed");
+        let payment = circuit::prove_payment(&usdc_hush.witness).expect("payment proof should succeed");
         let sidecar = fee_sidecar::prove_hush_fee(
-            usdt_hush.fee_sidecar_witness.as_ref().expect("Mode B fixture should include sidecar"),
+            usdt_hush
+                .fee_sidecar_witness
+                .as_ref()
+                .expect("Mode B fixture should include sidecar"),
         )
         .expect("sidecar proof should succeed");
 
@@ -239,12 +237,10 @@ mod tests {
         let fixture = valid_usdc_hush_fee_fixture();
         let mut tx = fixture.tx.clone();
         tx.tx_binding_hash = tx.tx_binding_hash.wrapping_add(1);
-        let err =
-            match prove_payment_bundle(&tx, &fixture.witness, fixture.fee_sidecar_witness.as_ref())
-            {
-                Ok(_) => panic!("wrong tx_binding_hash should be rejected"),
-                Err(err) => err,
-            };
+        let err = match prove_payment_bundle(&tx, &fixture.witness, fixture.fee_sidecar_witness.as_ref()) {
+            Ok(_) => panic!("wrong tx_binding_hash should be rejected"),
+            Err(err) => err,
+        };
         assert!(err.contains("tx_binding_hash"));
     }
 
@@ -253,12 +249,10 @@ mod tests {
         let fixture = valid_usdc_hush_fee_fixture();
         let mut tx = fixture.tx.clone();
         tx.attachment.sender_binding_tag = tx.attachment.sender_binding_tag.wrapping_add(1);
-        let err =
-            match prove_payment_bundle(&tx, &fixture.witness, fixture.fee_sidecar_witness.as_ref())
-            {
-                Ok(_) => panic!("wrong sender_binding_tag should be rejected"),
-                Err(err) => err,
-            };
+        let err = match prove_payment_bundle(&tx, &fixture.witness, fixture.fee_sidecar_witness.as_ref()) {
+            Ok(_) => panic!("wrong sender_binding_tag should be rejected"),
+            Err(err) => err,
+        };
         assert!(err.contains("sender_binding_tag"));
     }
 }

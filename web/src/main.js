@@ -4,7 +4,9 @@ import init, {
   prove_time_window_audit,
 } from '../pkg/hush_demo_stark.js';
 
-const AMT_SCALE = 1;
+// 1 protocol unit = $0.0001 (4 decimal places). Circuit uses four-limb radix-2^15 encoding
+// with u64 amounts (max ~$115 trillion per note). Display dollars * AMT_SCALE = protocol units.
+const AMT_SCALE = 10_000;
 
 const SK = 12345;
 const CRED_ISSUER = 1;
@@ -55,7 +57,7 @@ const TOUR_STEPS = [
   {
     target: '#send-card',
     title: 'Amount, fee, total',
-    copy: 'The sender sees amount, fee route, and total before sending. Same-asset fees and the HUSH sidecar route both run through the dual fee model backend path here.',
+    copy: 'The sender sees amount, fee route, and total before sending. Both same-asset fees and the HUSH sidecar route run through the dual fee backend.',
   },
   {
     target: '#activity-card',
@@ -106,21 +108,17 @@ function render() {
   }
 }
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+function fmtMoney(value) {
+  return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function fmt(value, min, max) {
-  return value.toLocaleString('en-US', { minimumFractionDigits: min, maximumFractionDigits: max });
+function fmtAssetValue(value) {
+  return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
 }
-const fmtMoney = (v) => fmt(v, 2, 2);
-const fmtAssetValue = (v) => fmt(v, 2, 3);
-const fmtFee = (v) => fmt(v, 3, 3);
+
+function fmtFee(value) {
+  return value.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+}
 
 function relativeTime(date) {
   const diff = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
@@ -274,7 +272,6 @@ function renderStage() {
           <div class="hero-note">Demo mode simulates wallet activation and credential issuance. It does not require email signup, wallet connection, passkeys, or document upload.</div>
           <div class="hero-actions">
             <button class="button-primary" onclick="startDemo()">Start demo</button>
-            <button class="button-secondary" onclick="openVerifier()">Open verifier</button>
           </div>
         </div>
       </section>
@@ -360,9 +357,7 @@ function renderStage() {
         <div class="wallet-card balance-card wallet-overview-card" id="wallet-balance-card">
           <div class="overview-header">
             <div>
-              <div class="balance-kicker">Wallet home</div>
               <div class="balance-amount">$${fmtAssetValue(currentBalance())}</div>
-              <div class="balance-support">Private stablecoin payments with exact total shown before send.</div>
             </div>
             <div class="status-pill">Credential active</div>
           </div>
@@ -376,10 +371,7 @@ function renderStage() {
 
         <div class="wallet-card send-composer-card" id="send-card">
           <div class="section-head">
-            <div>
-              <div class="section-kicker">Primary action</div>
-              <h3>Send private payment</h3>
-            </div>
+            <h3>Send private payment</h3>
           </div>
           <div class="send-layout">
             <div class="send-form-column">
@@ -391,19 +383,10 @@ function renderStage() {
                 <label for="amount-input">Amount</label>
                 <input id="amount-input" type="text" value="${state.currentAmountInput}" inputmode="decimal" placeholder="0.00" oninput="updateAmount(this.value)">
               </div>
-              <div class="field">
-                <label>Fee asset</label>
-                <div class="asset-tabs">
-                  <button class="asset-tab ${state.feeMode === 'same_asset' ? 'active' : ''}" onclick="switchFeeMode('same_asset')">${state.activeAsset}</button>
-                  <button class="asset-tab ${state.feeMode === 'hush' ? 'active' : ''}" onclick="switchFeeMode('hush')">HUSH</button>
-                </div>
-              </div>
-              <div class="send-note">The aligned backend supports both same-asset fees and the HUSH sidecar route. Local balances and funding are still demo-side.</div>
             </div>
             <div class="send-summary-panel">
               <div class="summary-panel-head">
                 <div class="summary-panel-kicker">Payment preview</div>
-                <div class="summary-panel-copy">Payment proof, validation, and accounting run locally in the browser-backed demo path. Receipt disclosure stays optional.</div>
               </div>
               <div class="fee-box">
                 <div class="fee-line"><span>Payment amount</span><strong id="summary-amount">${fmtMoney(currentAmount())} ${state.activeAsset}</strong></div>
@@ -422,33 +405,18 @@ function renderStage() {
       <div class="wallet-column wallet-side-column">
         <div class="wallet-card utility-stack-card" id="activity-card">
           <div class="section-head">
-            <div>
-              <div class="section-kicker">Recent session</div>
-              <h3>Activity</h3>
-            </div>
+            <h3>Activity</h3>
           </div>
-          <p class="compact-copy">Receipts and audit summaries stay close to the payment flow.</p>
           <div class="activity-list">
             ${renderActivity()}
           </div>
           <div class="utility-divider"></div>
-          <div class="section-head utility-subhead">
-            <div>
-              <div class="section-kicker">Verification</div>
-              <h3>Receipts and summaries</h3>
+          <div class="audit-footer">
+            <div class="audit-footer-text">
+              <strong>Time-window audit</strong>
+              <span>Prove a payment range for compliance without revealing individual amounts.</span>
             </div>
-          </div>
-          <div class="quick-actions">
-            <div class="quick-card">
-              <h4>Receipt verifier</h4>
-              <p>Open the verification page and inspect only the fields a sender chose to disclose.</p>
-              <button class="button-secondary" onclick="openVerifier()">Open verifier</button>
-            </div>
-            <div class="quick-card">
-              <h4>Audit summary</h4>
-              <p>Create a browser-verified time-window summary from payments generated in this session.</p>
-              <button class="button-primary" onclick="openAuditModal()" ${state.transactions.length ? '' : 'disabled'}>Create summary</button>
-            </div>
+            <button class="button-secondary button-sm" onclick="openAuditModal()" ${state.transactions.length ? '' : 'disabled'}>Create proof</button>
           </div>
         </div>
       </div>
@@ -473,10 +441,11 @@ function renderActivity() {
 
   return state.activity.map((item) => {
     const meta = [];
-    const badgeClass = item.kind === 'payment' ? 'payment' : 'system';
+    const badgeClass = item.kind === 'payment' ? 'payment' : item.kind === 'audit' ? 'audit' : 'system';
     if (item.asset) meta.push(`${fmtMoney(item.amount)} ${item.asset}`);
     if (item.feeAmount != null) meta.push(`fee ${fmtFee(item.feeAmount)} ${item.feeAsset}`);
     if (item.kind === 'payment') meta.push('<a class="activity-link" onclick="showReceipt(\'' + item.id + '\')">Receipt</a>');
+    if (item.kind === 'audit') meta.push('<a class="activity-link" onclick="renderAuditResult(); document.getElementById(\'audit-overlay\').classList.add(\'show\')">View proof</a>');
     return `
       <div class="activity-item">
         <div class="activity-badge ${badgeClass}">${item.icon}</div>
@@ -511,44 +480,26 @@ function renderRail() {
 
   return `
     <div class="rail-card session-card" id="truth-card">
-      <div class="rail-kicker">Proof status</div>
-      <h3>What is real in this demo</h3>
-      <div class="rail-list concise-rail-list">
-        <div class="rail-item rail-item-real"><strong>Backend-backed now</strong><span>Mode A same-asset fees, Mode B HUSH sidecars, bundle validation, block accounting, epoch accrual, claimable payout records, and time-window audit proofs.</span></div>
-        <div class="rail-item rail-item-local"><strong>Still demo-side</strong><span>Wallet setup, credential issuance, displayed balances, and the local HUSH reserve used to drive this browser session.</span></div>
+      <div class="rail-kicker">Proof activity</div>
+      ${state.isSending ? `
+        <div class="proving-live">
+          <span class="proving-dot"></span>
+          <span>Generating STARK proof…</span>
+        </div>
+      ` : state.timings ? `
+        <div class="proof-timing-line">
+          <span>${state.timings.prove.toFixed(0)}ms prove</span>
+          <span class="timing-sep">·</span>
+          <span>${state.timings.verify.toFixed(0)}ms verify</span>
+          <span class="timing-sep">·</span>
+          <span>${state.timings.accounting.toFixed(1)}ms accounting</span>
+        </div>
+      ` : `
+        <div class="session-empty">Send a payment to see the prover run.</div>
+      `}
+      <div class="proof-log-live">
+        ${renderProofLog()}
       </div>
-      ${state.timings ? `
-        <div class="session-stats">
-          <div class="session-stat">
-            <span>Prove</span>
-            <strong>${state.timings.prove.toFixed(0)}ms</strong>
-          </div>
-          <div class="session-stat">
-            <span>Verify</span>
-            <strong>${state.timings.verify.toFixed(0)}ms</strong>
-          </div>
-          <div class="session-stat">
-            <span>Accounting</span>
-            <strong>${state.timings.accounting.toFixed(2)}ms</strong>
-          </div>
-          <div class="session-stat">
-            <span>Epoch close</span>
-            <strong>${state.timings.epochClose.toFixed(2)}ms</strong>
-          </div>
-        </div>
-      ` : '<div class="session-empty">No payment proof has been generated in this browser session yet.</div>'}
-      <details class="rail-details" open>
-        <summary>Proof log</summary>
-        <div class="rail-details-body">
-          <div class="proof-log">${renderProofLog()}</div>
-        </div>
-      </details>
-      <details class="rail-details" ${state.proofOutputs.length ? 'open' : ''}>
-        <summary>Public proof outputs</summary>
-        <div class="rail-details-body">
-          ${renderProofOutputs()}
-        </div>
-      </details>
       <details class="rail-details">
         <summary>Credential simulation</summary>
         <div class="rail-details-body">
@@ -560,18 +511,8 @@ function renderRail() {
           </div>
         </div>
       </details>
-      <details class="rail-details">
-        <summary>Current scope</summary>
-        <div class="rail-details-body">
-          <div class="truth-grid compact-truth-grid">
-            <div class="truth-card proof"><strong>Verified today</strong><span>Canonical PaymentTxV1 building, Mode A and Mode B proving, combined validation, block fee buckets, epoch accrual, claimable payout records, receipt verification, and audit proving.</span></div>
-            <div class="truth-card current"><strong>Demo behavior</strong><span>Wallet balances, HUSH sidecar reserve, onboarding, and credential issuance stay local to drive the walkthrough.</span></div>
-            <div class="truth-card future"><strong>Still to build</strong><span>Live validator-network submission, finality plumbing, and production reward-claim wallet UX.</span></div>
-          </div>
-        </div>
-      </details>
       <details class="rail-details" ${state.lastSubmission ? 'open' : ''}>
-        <summary>Claimable payout preview</summary>
+        <summary>Payout preview</summary>
         <div class="rail-details-body">
           ${renderPayoutPreview()}
         </div>
@@ -695,7 +636,7 @@ window.restartDemo = function restartDemo() {
   state.feeMode = 'same_asset';
   state.currentRecipient = DEFAULT_RECIPIENT;
   state.currentAmountInput = DEFAULT_AMOUNT;
-  state.balances = { USDC: 1_500_000, USDT: 500_000 };
+  state.balances = { USDC: 2_500_000, USDT: 600_000 };
   state.hushBalance = 250;
   state.activity = [];
   state.transactions = [];
@@ -724,7 +665,7 @@ window.scrollToTruth = function scrollToTruth() {
 };
 
 window.openVerifier = function openVerifier() {
-  window.location.href = '/verify.html';
+  window.open('/verify.html', '_blank');
 };
 
 window.toggleTour = function toggleTour() {
@@ -798,8 +739,7 @@ async function sendPayment() {
 
   state.isSending = true;
   resetProofScope();
-  pushLog('info', `Preparing ${fmtMoney(amount)} ${state.activeAsset} for ${recipient}.`);
-  pushLog('info', `Route ${quote.route === 'mode_b_hush_sidecar' ? 'Mode B HUSH sidecar' : 'Mode A same-asset'} quoted with fee ${fmtFee(quote.fee_amount / AMT_SCALE)} ${currentFeeAsset()}.`);
+  pushLog('info', `${quote.route === 'mode_b_hush_sidecar' ? 'HUSH sidecar' : 'Same-asset fee'}: ${fmtFee(quote.fee_amount / AMT_SCALE)} ${currentFeeAsset()}.`);
   render();
 
   await new Promise((resolve) => setTimeout(resolve, 80));
@@ -824,7 +764,7 @@ async function sendPayment() {
     }
     const recipientOwner = (Math.abs(hash) % 90_000) + 10_000;
 
-    pushLog('info', 'Generating dual fee payment bundle in the browser.');
+    pushLog('info', 'Generating dual fee payment bundle.');
 
     const response = parseRuntimeResponse(dual_fee_submit_demo_payment_json(
       assetId(state.activeAsset),
@@ -852,9 +792,9 @@ async function sendPayment() {
     pushLog('success', `Payment bundle accepted. Prove ${paymentProof.prove_time_ms.toFixed(0)}ms, verify ${paymentProof.verify_time_ms.toFixed(0)}ms.`);
     pushLog('success', `Accounting ${accountingStage.duration_ms.toFixed(2)}ms, epoch close ${epochCloseStage.duration_ms.toFixed(2)}ms.`);
     if (result.hush_sidecar) {
-      pushLog('info', `Mode B sidecar validated with shared tx_binding_hash ${result.hush_sidecar.tx_binding_hash}.`);
+      pushLog('info', 'HUSH sidecar validated.');
     } else {
-      pushLog('info', 'Mode A same-asset path used the canonical payment bundle without sidecar.');
+      pushLog('info', 'Same-asset fee path.');
     }
 
     state.timings = {
@@ -914,6 +854,8 @@ async function sendPayment() {
           note_root: paymentProof.note_root,
           cred_root: paymentProof.cred_root,
           epoch: paymentProof.epoch,
+          tx_binding_hash: paymentProof.tx_binding_hash,
+          sender_binding_tag: paymentProof.sender_binding_tag,
         },
       },
     };
@@ -939,10 +881,9 @@ async function sendPayment() {
     state.currentAmountInput = DEFAULT_AMOUNT;
     state.isSending = false;
     render();
-    openSuccessOverlay(txId);
     showToast(`Payment sent to ${recipient}.`, 'success');
   } catch (error) {
-    pushLog('error', `Dual fee payment bundle failed: ${error.message}`);
+    pushLog('error', `Payment proof failed: ${error.message}`);
     state.isSending = false;
     render();
     showToast(`Payment bundle failed: ${error.message}`, 'error');
@@ -963,6 +904,7 @@ function buildReceiptPayload(txId) {
     version: 1,
     tx_id: tx.receipt.tx_id,
     proof: tx.receipt.proof,
+    fee: { amount: tx.feeAmount, asset: tx.feeAsset },
   };
 
   document.querySelectorAll('#receipt-content [data-field]').forEach((row) => {
@@ -995,7 +937,7 @@ function openSuccessOverlay(txId) {
       <button class="close-button" onclick="closeOverlay('success-overlay')">×</button>
     </div>
     <div class="success-summary">
-      <div class="success-row"><span>Recipient</span><span>${escapeHtml(tx.recipient)}</span></div>
+      <div class="success-row"><span>Recipient</span><span>${tx.recipient}</span></div>
       <div class="success-row"><span>Amount</span><span>${fmtMoney(tx.amount)} ${tx.asset}</span></div>
       <div class="success-row"><span>Network fee</span><span>${fmtFee(tx.feeAmount)} ${tx.feeAsset}</span></div>
       <div class="success-row"><span>Total debited</span><span>${tx.totalDebited}</span></div>
@@ -1027,46 +969,35 @@ window.showReceipt = function showReceipt(txId) {
   container.innerHTML = `
     <div class="modal-top">
       <div>
-        <h3 class="modal-title">Create payment receipt</h3>
-        <p class="modal-copy">Choose what to include. The sender stays in control of what this receipt reveals, while the attached proof bytes can still be verified independently.</p>
+        <h3 class="modal-title">Payment receipt</h3>
+        <p class="modal-copy">Choose what to disclose. The proof bytes verify independently of what you include here.</p>
       </div>
       <button class="close-button" onclick="closeOverlay('receipt-overlay')">×</button>
     </div>
     <div class="receipt-list">
-      ${renderReceiptRow('amount', 'Amount', `${fmtMoney(tx.amount)} ${tx.asset}`, true, 'The payment amount disclosed to the verifier.')}
-      ${renderReceiptRow('timestamp', 'Date and time', tx.receipt.timestamp.replace('T', ' ').slice(0, 19), true, 'When the payment was created in this demo session.')}
-      ${renderReceiptRow('recipient', 'Recipient', tx.recipient, false, 'Useful for merchants, payroll, or a counterparty.')}
-      ${renderReceiptRow('asset', 'Asset', tx.asset, true, 'The stablecoin used in the payment.')}
-      ${renderReceiptRow('txid', 'Public transaction reference', tx.id.slice(0, 10) + '…', false, 'A wallet-visible reference for this payment.')}
-      ${renderReceiptRow('sender', 'Sender label', 'Wallet owner', false, 'Optional sender label for the receiving party.')}
-      ${renderReceiptRow('balance', 'Sender balance after send', `${fmtAssetValue(state.balances[tx.asset])} ${tx.asset}`, false, 'Optional and usually unnecessary.')}
-    </div>
-    <div class="always-hidden">
-      <strong>Always hidden</strong>
-      <ul>
-        <li>Spending key material</li>
-        <li>Private note details</li>
-        <li>Anything outside the fields selected here</li>
-      </ul>
+      ${renderReceiptRow('amount', 'Amount', `${fmtMoney(tx.amount)} ${tx.asset}`, true)}
+      ${renderReceiptRow('timestamp', 'Date and time', tx.receipt.timestamp.replace('T', ' ').slice(0, 19), true)}
+      ${renderReceiptRow('recipient', 'Recipient', tx.recipient, false)}
+      ${renderReceiptRow('asset', 'Asset', tx.asset, true)}
+      ${renderReceiptRow('txid', 'Transaction reference', tx.id.slice(0, 10) + '…', false)}
+      ${renderReceiptRow('sender', 'Sender', 'Wallet owner', false)}
+      ${renderReceiptRow('balance', 'Sender balance', `${fmtAssetValue(state.balances[tx.asset])} ${tx.asset}`, false)}
     </div>
     <div class="modal-actions">
-      <button class="button-primary" onclick="copyReceipt()">Copy receipt</button>
-      <button class="button-secondary" onclick="copyReceiptAndVerify()">Open verifier</button>
+      <button class="button-primary" onclick="copyReceipt()">Copy receipt JSON</button>
+      <button class="button-secondary" onclick="copyReceiptAndVerify()">Copy and verify</button>
     </div>
   `;
 
   document.getElementById('receipt-overlay').classList.add('show');
 };
 
-function renderReceiptRow(field, label, value, checked, help) {
+function renderReceiptRow(field, label, value, checked) {
   return `
-    <div class="receipt-row" data-field="${escapeHtml(field)}">
+    <div class="receipt-row" data-field="${field}">
       <input type="checkbox" ${checked ? 'checked' : ''}>
-      <div>
-        <div class="receipt-label">${escapeHtml(label)}</div>
-        <span class="receipt-help">${escapeHtml(help)}</span>
-      </div>
-      <div class="receipt-value">${escapeHtml(value)}</div>
+      <div class="receipt-label">${label}</div>
+      <div class="receipt-value">${value}</div>
     </div>
   `;
 }
@@ -1077,7 +1008,7 @@ window.copyReceipt = async function copyReceipt() {
   const payload = JSON.stringify(receipt, null, 2);
   try {
     await navigator.clipboard.writeText(payload);
-    sessionStorage.setItem('hush-receipt', payload);
+    localStorage.setItem('hush-receipt', payload);
     showToast('Receipt copied to clipboard.', 'success');
     closeOverlay('receipt-overlay');
   } catch {
@@ -1094,8 +1025,8 @@ window.copyReceiptAndVerify = async function copyReceiptAndVerify() {
   } catch {
     // ignore clipboard failure, still continue with verifier handoff
   }
-  sessionStorage.setItem('hush-receipt', payload);
-  window.location.href = '/verify.html';
+  localStorage.setItem('hush-receipt', payload);
+  window.open('/verify.html', '_blank');
 };
 
 window.openAuditModal = function openAuditModal() {
@@ -1163,7 +1094,8 @@ window.generateAuditSummary = async function generateAuditSummary() {
 
   try {
     const txs = currentAssetTransactions();
-    const amounts = new Uint32Array(txs.map((tx) => Math.max(1, Math.round(tx.amount / AMT_SCALE))));
+    // Time-window circuit uses single u32 amounts (not multi-limb), so pass display dollars directly.
+    const amounts = new Uint32Array(txs.map((tx) => Math.max(1, Math.round(tx.amount))));
     const timestamps = new Uint32Array(txs.map((_, index) => 100 + index));
     const result = prove_time_window_audit(100, 100 + txs.length, amounts, timestamps, SK, CRED_ISSUER, CRED_EXPIRY, CRED_SECRET);
 
@@ -1190,8 +1122,18 @@ window.generateAuditSummary = async function generateAuditSummary() {
     };
 
     pushLog('success', `Time-window audit proof generated in ${result.prove_time_ms.toFixed(0)}ms.`);
+
+    state.activity.unshift({
+      kind: 'audit',
+      icon: '⊞',
+      title: `Audit proof — ${state.activeAsset}`,
+      copy: `${txs.length} payment${txs.length !== 1 ? 's' : ''} · ${fmtMoney(totalVolume)} total · ${result.prove_time_ms.toFixed(0)}ms`,
+      id: 'audit-' + Date.now(),
+      time: new Date(),
+    });
+
     renderAuditResult();
-    showToast('Audit summary generated.', 'success');
+    showToast('Audit proof generated.', 'success');
   } catch (error) {
     pushLog('error', `Audit proof failed: ${error.message}`);
     showToast(`Audit proof failed: ${error.message}`, 'error');
@@ -1212,8 +1154,8 @@ function renderAuditResult() {
   if (result.selected.total_volume) disclosed.push(['Total volume', `${fmtMoney(result.totalVolume)} ${state.activeAsset}`]);
   if (result.selected.tx_count) disclosed.push(['Transaction count', String(result.txs.length)]);
   if (result.selected.time_period) disclosed.push(['Period', `${result.startDate} to ${result.endDate}`]);
-  if (result.selected.recipients) disclosed.push(['Recipients', result.txs.map((tx) => escapeHtml(tx.recipient)).join(', ')]);
-  if (result.selected.amounts) disclosed.push(['Amounts', result.txs.map((tx) => `${fmtMoney(tx.amount)} ${escapeHtml(tx.asset)}`).join(' · ')]);
+  if (result.selected.recipients) disclosed.push(['Recipients', result.txs.map((tx) => tx.recipient).join(', ')]);
+  if (result.selected.amounts) disclosed.push(['Amounts', result.txs.map((tx) => `${fmtMoney(tx.amount)} ${tx.asset}`).join(' · ')]);
 
   const hidden = [];
   if (!result.selected.recipients) hidden.push('Counterparty identities');
@@ -1233,20 +1175,40 @@ function renderAuditResult() {
     <div class="audit-result-block">
       <div class="audit-result-card">
         <h4>Disclosed</h4>
-        ${disclosed.map(([label, value]) => `<div class="audit-result-row"><span>${escapeHtml(label)}</span><span>${value}</span></div>`).join('')}
-        <div class="audit-result-row"><span>Proof time</span><span>${escapeHtml(result.proveMs.toFixed(0))}ms</span></div>
+        ${disclosed.map(([label, value]) => `<div class="audit-result-row"><span>${label}</span><span>${value}</span></div>`).join('')}
+        <div class="audit-result-row"><span>Proof time</span><span>${result.proveMs.toFixed(0)}ms</span></div>
       </div>
       <div class="audit-result-card">
         <h4>Still private</h4>
-        ${hidden.map((label) => `<div class="audit-result-row"><span>${escapeHtml(label)}</span><span>Hidden</span></div>`).join('')}
+        ${hidden.map((label) => `<div class="audit-result-row"><span>${label}</span><span>Hidden</span></div>`).join('')}
       </div>
     </div>
     <div class="modal-actions">
-      <button class="button-secondary" onclick="openAuditModal()">New summary</button>
+      <button class="button-secondary" onclick="openAuditModal()">New proof</button>
+      <button class="button-secondary" onclick="copyAuditProof()">Copy JSON</button>
       <button class="button-primary" onclick="closeOverlay('audit-overlay')">Done</button>
     </div>
   `;
 }
+
+window.copyAuditProof = async function copyAuditProof() {
+  if (!state.auditResult) return;
+  const payload = JSON.stringify({
+    type: 'hush-audit-proof',
+    asset: state.activeAsset,
+    total_volume: state.auditResult.totalVolume,
+    tx_count: state.auditResult.txs.length,
+    period: { start: state.auditResult.startDate, end: state.auditResult.endDate },
+    prove_ms: state.auditResult.proveMs,
+    disclosed: state.auditResult.selected,
+  }, null, 2);
+  try {
+    await navigator.clipboard.writeText(payload);
+    showToast('Audit proof copied to clipboard.', 'success');
+  } catch {
+    showToast('Copy failed.', 'error');
+  }
+};
 
 function renderTourStep() {
   const step = TOUR_STEPS[state.tourStep];

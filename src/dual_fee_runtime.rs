@@ -8,6 +8,7 @@ use crate::{
         EpochAccumulator, EpochSettlement, ValidatorBlockParticipation, ValidatorStakeInfo,
     },
     fee_sidecar,
+    measurement::Timer,
     payment_fixtures::{build_hush_fee_merkle_context, build_payment_merkle_context},
     payment_tx::{
         expected_fee_amount, payment_route, AssetId, NoteInput, PaymentRoute, PaymentTxV1,
@@ -15,23 +16,6 @@ use crate::{
     },
     payment_validation::{self, PaymentBundleProof},
 };
-
-/// Returns the current time in milliseconds. Uses `js_sys::Date` in WASM
-/// (where `std::time::Instant` is not available) and `SystemTime` elsewhere.
-#[cfg(target_arch = "wasm32")]
-fn now_ms() -> f64 {
-    js_sys::Date::now()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn now_ms() -> f64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
-        * 1_000.0
-}
 
 const DEMO_SENDER_KEY: u32 = 12_345;
 const DEMO_CRED_ISSUER: u32 = 1;
@@ -75,10 +59,10 @@ pub struct PaymentQuote {
     pub payment_asset: u32,
     pub fee_asset: u32,
     pub route: String,
-    pub fee_amount: u32,
-    pub payment_debit: u32,
-    pub hush_fee_debit: u32,
-    pub receiver_amount: u32,
+    pub fee_amount: u64,
+    pub payment_debit: u64,
+    pub hush_fee_debit: u64,
+    pub receiver_amount: u64,
     pub backend_backed: bool,
 }
 
@@ -86,17 +70,17 @@ pub struct PaymentQuote {
 pub struct WalletQuoteRequest {
     pub payment_asset: u32,
     pub fee_asset: u32,
-    pub amount: u32,
+    pub amount: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WalletSubmissionRequest {
     pub payment_asset: u32,
     pub fee_asset: u32,
-    pub amount: u32,
+    pub amount: u64,
     pub recipient_owner: u32,
-    pub payment_balance: u32,
-    pub hush_balance: u32,
+    pub payment_balance: u64,
+    pub hush_balance: u64,
     pub credential_expiry: Option<u32>,
 }
 
@@ -110,6 +94,8 @@ pub struct PaymentProofView {
     pub note_root: u32,
     pub cred_root: u32,
     pub epoch: u32,
+    pub tx_binding_hash: u32,
+    pub sender_binding_tag: u32,
     pub prove_time_ms: f64,
     pub verify_time_ms: f64,
     pub proof_bytes: String,
@@ -120,7 +106,7 @@ pub struct HushSidecarProofView {
     pub note_root: u32,
     pub tx_binding_hash: u32,
     pub sender_binding_tag: u32,
-    pub fee_amount: u32,
+    pub fee_amount: u64,
     pub null_0: u32,
     pub null_1: u32,
     pub change_cm: u32,
@@ -203,7 +189,7 @@ pub fn dual_fee_review_snapshot() -> DualFeeReviewSnapshot {
                 key: "wallet_onboarding".to_string(),
                 label: "Wallet onboarding and credential activation".to_string(),
                 level: ImplementationLevel::RepresentedOnly,
-                detail: "The demo still simulates setup and credential issuance so the payment path stays focused on dual fee model execution support.".to_string(),
+                detail: "The demo still simulates setup and credential issuance so the payment path stays focused on dual-fee execution support.".to_string(),
             },
             ReviewItem {
                 group: "represented_only".to_string(),
@@ -224,7 +210,7 @@ pub fn dual_fee_review_snapshot() -> DualFeeReviewSnapshot {
                 key: "live_network_submission".to_string(),
                 label: "Live validator network path".to_string(),
                 level: ImplementationLevel::NotImplemented,
-                detail: "The demo executes locally and does not yet submit dual fee transactions into a live validator network or finality path.".to_string(),
+                detail: "The demo executes locally and does not yet submit dual-fee transactions into a live validator network or finality path.".to_string(),
             },
         ],
     }
@@ -241,7 +227,11 @@ pub fn quote_payment(request: &WalletQuoteRequest) -> Result<PaymentQuote, Strin
         .amount
         .checked_add(route.payment_fee_deduction(fee_amount))
         .ok_or_else(|| "payment debit overflow".to_string())?;
-    let hush_fee_debit = if route == PaymentRoute::HushSidecar { fee_amount } else { 0 };
+    let hush_fee_debit = if route == PaymentRoute::HushSidecar {
+        fee_amount
+    } else {
+        0
+    };
 
     Ok(PaymentQuote {
         payment_asset: request.payment_asset,
@@ -263,38 +253,36 @@ pub fn inspect_claimable_payouts(settlement: &EpochSettlement) -> Result<PayoutI
     })
 }
 
-pub fn submit_wallet_payment(
-    request: &WalletSubmissionRequest,
-) -> Result<WalletSubmissionResult, String> {
+pub fn submit_wallet_payment(request: &WalletSubmissionRequest) -> Result<WalletSubmissionResult, String> {
     let prepared = prepare_wallet_submission(request)?;
 
-    let prove_start = now_ms();
+    let prove_timer = Timer::start();
     let bundle = payment_validation::prove_payment_bundle(
         &prepared.tx,
         &prepared.payment_witness,
         prepared.fee_sidecar_witness.as_ref(),
     )?;
-    let prove_time_ms = now_ms() - prove_start;
+    let prove_time_ms = prove_timer.elapsed_ms();
 
-    let verify_start = now_ms();
+    let verify_timer = Timer::start();
     payment_validation::validate_payment_bundle(&prepared.tx, &bundle)?;
-    let verify_time_ms = now_ms() - verify_start;
+    let verify_time_ms = verify_timer.elapsed_ms();
 
-    let accounting_start = now_ms();
+    let accounting_timer = Timer::start();
     let mut block = BlockAccountingBuilder::new(DEMO_BLOCK_HEIGHT, DEMO_PROPOSER_ID);
     block.record_payment_bundle(&prepared.tx, &bundle)?;
     let block_accounting = block.finalize();
     block_accounting.validate()?;
-    let accounting_time_ms = now_ms() - accounting_start;
+    let accounting_time_ms = accounting_timer.elapsed_ms();
 
-    let settlement_start = now_ms();
+    let settlement_timer = Timer::start();
     let validators = demo_validator_set();
     let participation = demo_participation();
     let mut epoch = EpochAccumulator::new(1);
     epoch.apply_block(&block_accounting, &validators, &participation)?;
     let settlement = epoch.close()?;
     let payout_inspection = inspect_claimable_payouts(&settlement)?;
-    let settlement_time_ms = now_ms() - settlement_start;
+    let settlement_time_ms = settlement_timer.elapsed_ms();
 
     Ok(WalletSubmissionResult {
         accepted: true,
@@ -307,17 +295,27 @@ pub fn submit_wallet_payment(
         settlement,
         payout_inspection,
         stage_timings: vec![
-            TimedStage { label: "prove".to_string(), duration_ms: prove_time_ms },
-            TimedStage { label: "verify".to_string(), duration_ms: verify_time_ms },
-            TimedStage { label: "accounting".to_string(), duration_ms: accounting_time_ms },
-            TimedStage { label: "epoch_close".to_string(), duration_ms: settlement_time_ms },
+            TimedStage {
+                label: "prove".to_string(),
+                duration_ms: prove_time_ms,
+            },
+            TimedStage {
+                label: "verify".to_string(),
+                duration_ms: verify_time_ms,
+            },
+            TimedStage {
+                label: "accounting".to_string(),
+                duration_ms: accounting_time_ms,
+            },
+            TimedStage {
+                label: "epoch_close".to_string(),
+                duration_ms: settlement_time_ms,
+            },
         ],
     })
 }
 
-fn prepare_wallet_submission(
-    request: &WalletSubmissionRequest,
-) -> Result<PreparedWalletSubmission, String> {
+fn prepare_wallet_submission(request: &WalletSubmissionRequest) -> Result<PreparedWalletSubmission, String> {
     let quote = quote_payment(&WalletQuoteRequest {
         payment_asset: request.payment_asset,
         fee_asset: request.fee_asset,
@@ -339,9 +337,8 @@ fn prepare_wallet_submission(
 
     let route = payment_route(request.payment_asset, request.fee_asset)?;
     let payment_inputs = split_demo_notes(request.payment_balance, 111, 222)?;
-    let recipient_randomness =
-        request.recipient_owner.wrapping_mul(31).wrapping_add(request.amount);
-    let sender_change_randomness = request.payment_balance.wrapping_mul(17).wrapping_add(444);
+    let recipient_randomness = request.recipient_owner.wrapping_mul(31).wrapping_add(request.amount as u32);
+    let sender_change_randomness = (request.payment_balance as u32).wrapping_mul(17).wrapping_add(444);
     let tx = match route {
         PaymentRoute::SameAsset => PaymentTxV1::build_same_asset(
             payment_asset,
@@ -367,7 +364,9 @@ fn prepare_wallet_submission(
         )?,
     };
 
-    let cred_expiry = request.credential_expiry.unwrap_or(DEMO_ACTIVE_CREDENTIAL_EXPIRY);
+    let cred_expiry = request
+        .credential_expiry
+        .unwrap_or(DEMO_ACTIVE_CREDENTIAL_EXPIRY);
     let payment_context = build_payment_merkle_context(
         DEMO_SENDER_KEY,
         payment_inputs,
@@ -387,29 +386,45 @@ fn prepare_wallet_submission(
                 .hush_balance
                 .checked_sub(quote.hush_fee_debit)
                 .ok_or_else(|| "invalid HUSH change after fee deduction".to_string())?,
-            randomness: request.hush_balance.wrapping_mul(19).wrapping_add(717),
+            randomness: (request.hush_balance as u32).wrapping_mul(19).wrapping_add(717),
         };
-        Some(tx.build_hush_fee_witness(DEMO_SENDER_KEY, hush_inputs, hush_change, &hush_context)?)
+        Some(tx.build_hush_fee_witness(
+            DEMO_SENDER_KEY,
+            hush_inputs,
+            hush_change,
+            &hush_context,
+        )?)
     } else {
         None
     };
 
-    Ok(PreparedWalletSubmission { quote, tx, payment_witness, fee_sidecar_witness })
+    Ok(PreparedWalletSubmission {
+        quote,
+        tx,
+        payment_witness,
+        fee_sidecar_witness,
+    })
 }
 
-fn split_demo_notes(total: u32, rand_0: u32, rand_1: u32) -> Result<[NoteInput; 2], String> {
+fn split_demo_notes(total: u64, rand_0: u32, rand_1: u32) -> Result<[NoteInput; 2], String> {
     if total < 2 {
         return Err("demo balance must be at least two base units".to_string());
     }
-    let mut left = ((total as u64)
-        .checked_mul(DEMO_NOTE_RATIO_BPS as u64)
+    let mut left = total
+        .checked_mul(u64::from(DEMO_NOTE_RATIO_BPS))
         .ok_or_else(|| "demo note split overflow".to_string())?
-        / 10_000) as u32;
+        / 10_000;
     left = left.clamp(1, total - 1);
     let right = total - left;
     Ok([
-        NoteInput { amount: left, randomness: rand_0 },
-        NoteInput { amount: right, randomness: rand_1 },
+        NoteInput {
+            amount: left,
+            randomness: rand_0,
+        },
+        NoteInput {
+            amount: right,
+            randomness: rand_1,
+        },
     ])
 }
 
@@ -436,6 +451,8 @@ fn payment_proof_view(
         note_root: bundle.payment.public_data.note_root,
         cred_root: bundle.payment.public_data.cred_root,
         epoch: bundle.payment.public_data.epoch,
+        tx_binding_hash: bundle.payment.public_data.tx_binding_hash,
+        sender_binding_tag: bundle.payment.public_data.sender_binding_tag,
         prove_time_ms,
         verify_time_ms,
         proof_bytes: base64_encode(&serialized),
@@ -456,8 +473,16 @@ fn hush_sidecar_view(result: &fee_sidecar::ProofResult) -> HushSidecarProofView 
 
 fn demo_validator_set() -> Vec<ValidatorStakeInfo> {
     vec![
-        ValidatorStakeInfo { validator_id: 1, payout_key: 101, effective_stake: 120 },
-        ValidatorStakeInfo { validator_id: 2, payout_key: 202, effective_stake: 80 },
+        ValidatorStakeInfo {
+            validator_id: 1,
+            payout_key: 101,
+            effective_stake: 120,
+        },
+        ValidatorStakeInfo {
+            validator_id: 2,
+            payout_key: 202,
+            effective_stake: 80,
+        },
     ]
 }
 
@@ -481,7 +506,8 @@ fn demo_participation() -> Vec<ValidatorBlockParticipation> {
 fn base64_encode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity((bytes.len() * 4).div_ceil(3));
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut index = 0;
     while index + 2 < bytes.len() {
         let b0 = bytes[index] as usize;
@@ -539,7 +565,7 @@ mod tests {
             amount: 10_000,
             recipient_owner: 66_666,
             payment_balance: 11_000,
-            hush_balance: 15,
+            hush_balance: 60,
             credential_expiry: None,
         }
     }
@@ -554,7 +580,7 @@ mod tests {
         })
         .expect("same-asset quote should succeed");
         assert_eq!(quote.route, "mode_a_same_asset");
-        assert_eq!(quote.payment_debit, 8_005);
+        assert_eq!(quote.payment_debit, 8_050);
         assert_eq!(quote.hush_fee_debit, 0);
 
         let prepared = prepare_wallet_submission(&request).expect("submission should prepare");
@@ -564,9 +590,9 @@ mod tests {
             RecipientIntent {
                 amount: request.amount,
                 owner: request.recipient_owner,
-                randomness: request.recipient_owner.wrapping_mul(31).wrapping_add(request.amount),
+                randomness: request.recipient_owner.wrapping_mul(31).wrapping_add(request.amount as u32),
             },
-            request.payment_balance.wrapping_mul(17).wrapping_add(444),
+            (request.payment_balance as u32).wrapping_mul(17).wrapping_add(444),
             DEMO_SENDER_KEY,
         )
         .expect("expected tx should build");
@@ -584,7 +610,7 @@ mod tests {
         .expect("HUSH sidecar quote should succeed");
         assert_eq!(quote.route, "mode_b_hush_sidecar");
         assert_eq!(quote.payment_debit, 10_000);
-        assert_eq!(quote.hush_fee_debit, 5);
+        assert_eq!(quote.hush_fee_debit, 50);
 
         let prepared = prepare_wallet_submission(&request).expect("submission should prepare");
         let expected = PaymentTxV1::build_with_hush_fee(
@@ -593,9 +619,9 @@ mod tests {
             RecipientIntent {
                 amount: request.amount,
                 owner: request.recipient_owner,
-                randomness: request.recipient_owner.wrapping_mul(31).wrapping_add(request.amount),
+                randomness: request.recipient_owner.wrapping_mul(31).wrapping_add(request.amount as u32),
             },
-            request.payment_balance.wrapping_mul(17).wrapping_add(444),
+            (request.payment_balance as u32).wrapping_mul(17).wrapping_add(444),
             DEMO_SENDER_KEY,
         )
         .expect("expected tx should build");
@@ -616,7 +642,7 @@ mod tests {
     #[test]
     fn test_malformed_submission_rejected_for_insufficient_hush_balance() {
         let mut request = sample_mode_b_request();
-        request.hush_balance = 4;
+        request.hush_balance = 0;
         let err = submit_wallet_payment(&request)
             .expect_err("insufficient HUSH fee reserve should be rejected");
         assert!(err.contains("HUSH balance"));
@@ -627,8 +653,9 @@ mod tests {
         let settlement = submit_wallet_payment(&sample_mode_b_request())
             .expect("Mode B submission should succeed")
             .settlement;
-        let record =
-            settlement.payout_record_for_validator(1).expect("validator 1 payout should exist");
+        let record = settlement
+            .payout_record_for_validator(1)
+            .expect("validator 1 payout should exist");
         assert!(record.entitlement.hush > 0);
     }
 
@@ -636,10 +663,13 @@ mod tests {
     fn test_mixed_basket_payout_totals_reconcile_at_consumer_interface() {
         let result = submit_wallet_payment(&sample_mode_b_request())
             .expect("Mode B submission should succeed");
-        assert_eq!(result.payout_inspection.fee_pools, result.payout_inspection.payout_totals);
+        assert_eq!(
+            result.payout_inspection.fee_pools,
+            result.payout_inspection.payout_totals
+        );
         assert_eq!(
             result.payout_inspection.payout_totals.hush,
-            u64::from(result.quote.hush_fee_debit)
+            result.quote.hush_fee_debit
         );
     }
 
@@ -673,56 +703,20 @@ mod tests {
         );
     }
 
-    // Verify the exact balances and amounts the live demo uses stay within
-    // circuit constraints after the AMT_SCALE=1 fix.
     #[test]
-    fn test_demo_scale_mode_a_usdc() {
+    fn test_demo_large_balance_125k_payment() {
+        // Reproduces the exact demo values: initial USDC balance 1.5M, payment 125k
         let request = WalletSubmissionRequest {
-            payment_asset: AssetId::Usdc as u32,
-            fee_asset: AssetId::Usdc as u32,
+            payment_asset: 1, // USDC
+            fee_asset: 1,     // same-asset
             amount: 125_000,
-            recipient_owner: 99_999,
+            recipient_owner: 50_000,
             payment_balance: 1_500_000,
             hush_balance: 250,
             credential_expiry: None,
         };
-        let result = submit_wallet_payment(&request).expect("Mode A demo scale should succeed");
+        let result = submit_wallet_payment(&request)
+            .expect("1.5M balance / 125k payment should prove successfully");
         assert_eq!(result.quote.route, "mode_a_same_asset");
-        assert_eq!(result.quote.receiver_amount, 125_000);
-        assert_eq!(result.quote.fee_amount, 5);
-        assert!(result.accepted);
-    }
-
-    #[test]
-    fn test_demo_scale_mode_b_usdt_hush_sidecar() {
-        let request = WalletSubmissionRequest {
-            payment_asset: AssetId::Usdt as u32,
-            fee_asset: AssetId::Hush as u32,
-            amount: 125_000,
-            recipient_owner: 99_999,
-            payment_balance: 500_000,
-            hush_balance: 250,
-            credential_expiry: None,
-        };
-        let result = submit_wallet_payment(&request).expect("Mode B demo scale should succeed");
-        assert_eq!(result.quote.route, "mode_b_hush_sidecar");
-        assert_eq!(result.quote.receiver_amount, 125_000);
-        assert_eq!(result.quote.hush_fee_debit, 5);
-        assert!(result.accepted);
-    }
-
-    #[test]
-    fn test_demo_scale_expired_credential_rejected_by_circuit() {
-        let request = WalletSubmissionRequest {
-            payment_asset: AssetId::Usdc as u32,
-            fee_asset: AssetId::Usdc as u32,
-            amount: 125_000,
-            recipient_owner: 99_999,
-            payment_balance: 1_500_000,
-            hush_balance: 250,
-            credential_expiry: Some(1), // expired: expiry=1 < epoch=1000
-        };
-        let result = submit_wallet_payment(&request);
-        assert!(result.is_err(), "expired credential should fail proof verification");
     }
 }

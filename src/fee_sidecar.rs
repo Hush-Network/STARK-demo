@@ -29,16 +29,25 @@ use crate::{
     payment_tx::{derive_sender_binding_tag, AssetId},
     poseidon2, poseidon2_air,
     prover_common::{pcs_config, ProverChannel, ProverMerkleChannel, ProverMerkleHasher},
-    types::{HushFeeWitness, MERKLE_DEPTH},
+    types::{
+        amount_to_limbs, HushFeeWitness, CARRY_BIAS, CARRY_BITS, LIMB_BITS, MERKLE_DEPTH,
+        NUM_CARRIES, NUM_LIMBS,
+    },
 };
 
 const LOG_CONSTRAINT_EVAL_BLOWUP_FACTOR: u32 = 1;
 const MERKLE_LEVEL_COLS: usize = 3 + poseidon2_air::HASH_INTERMEDIATE_COLS;
-const AMT_BITS: usize = 21;
-const AMT_RANGE_COLS: usize = 4 * AMT_BITS;
+
+// 4 amounts x 4 limbs = 16 limbs, each range-checked to 15 bits
+const FEE_NUM_AMOUNTS: usize = 4;
+const FEE_LIMB_RANGE_COLS: usize = FEE_NUM_AMOUNTS * NUM_LIMBS * LIMB_BITS; // 240
+
+// 34 base/aux + 240 limb range + 6 hashes + 2 Merkle paths
+// Base: 28 witness + 6 carry bits (3 carries x 2 bits)
+const FEE_BASE_AUX_COLS: usize = 28 + NUM_CARRIES * CARRY_BITS;
 const NUM_HASHES: usize = 6;
-const NUM_COLS: usize = 16
-    + AMT_RANGE_COLS
+const NUM_COLS: usize = FEE_BASE_AUX_COLS
+    + FEE_LIMB_RANGE_COLS
     + NUM_HASHES * poseidon2_air::HASH_INTERMEDIATE_COLS
     + 2 * MERKLE_DEPTH * MERKLE_LEVEL_COLS;
 
@@ -76,38 +85,73 @@ impl FrameworkEval for HushFeeSidecarEval {
     fn evaluate<E: EvalAtRow>(&self, mut eval: E) -> E {
         let sk = eval.next_trace_mask();
         let owner = eval.next_trace_mask();
-        let in_amt_0 = eval.next_trace_mask();
+
+        // Four-limb amounts: 4 amounts x 4 limbs = 16 limb columns
+        let in_amt_0: [E::F; NUM_LIMBS] = core::array::from_fn(|_| eval.next_trace_mask());
         let in_rand_0 = eval.next_trace_mask();
-        let in_amt_1 = eval.next_trace_mask();
+        let in_amt_1: [E::F; NUM_LIMBS] = core::array::from_fn(|_| eval.next_trace_mask());
         let in_rand_1 = eval.next_trace_mask();
         let in_cm_0 = eval.next_trace_mask();
         let in_cm_1 = eval.next_trace_mask();
         let null_0 = eval.next_trace_mask();
         let null_1 = eval.next_trace_mask();
-        let change_amt = eval.next_trace_mask();
+        let change_amt: [E::F; NUM_LIMBS] = core::array::from_fn(|_| eval.next_trace_mask());
         let change_rand = eval.next_trace_mask();
-        let fee_amount = eval.next_trace_mask();
+        let fee_limbs: [E::F; NUM_LIMBS] = core::array::from_fn(|_| eval.next_trace_mask());
         let change_cm = eval.next_trace_mask();
         let pub_note_root = eval.next_trace_mask();
 
-        eval.add_constraint(
-            in_amt_0.clone() + in_amt_1.clone() - change_amt.clone() - fee_amount.clone(),
-        );
-
+        // Nullifier inequality via multiplicative inverse
         let null_diff_inv = eval.next_trace_mask();
         eval.add_constraint((null_0.clone() - null_1.clone()) * null_diff_inv - E::F::one());
 
         let two = E::F::one() + E::F::one();
-        for amt in [in_amt_0.clone(), in_amt_1.clone(), change_amt.clone(), fee_amount.clone()] {
-            let mut recon = E::F::zero();
-            let mut p2 = E::F::one();
-            for _ in 0..AMT_BITS {
-                let bit = eval.next_trace_mask();
-                eval.add_constraint(bit.clone() * (bit.clone() - E::F::one()));
-                recon += bit * p2.clone();
-                p2 *= two.clone();
+
+        // Carry columns for limb-by-limb balance conservation.
+        // Conservation: in0 + in1 = change + fee
+        // Carries are in [-2, 1]. Biased carry = carry + CARRY_BIAS is in [0, 3] (2-bit).
+        let carry_bias = E::F::from(M31::from(CARRY_BIAS));
+        let radix = E::F::from(M31::from(crate::types::RADIX as u32));
+        let mut carries: [E::F; NUM_CARRIES] = core::array::from_fn(|_| E::F::zero());
+        for k in 0..NUM_CARRIES {
+            let c_b0 = eval.next_trace_mask();
+            let c_b1 = eval.next_trace_mask();
+            eval.add_constraint(c_b0.clone() * (c_b0.clone() - E::F::one()));
+            eval.add_constraint(c_b1.clone() * (c_b1.clone() - E::F::one()));
+            carries[k] = c_b0 + two.clone() * c_b1 - carry_bias.clone();
+        }
+
+        // Limb-by-limb balance conservation:
+        // For k = 0..3: in0[k] + in1[k] + c_prev - change[k] - fee[k] - c_k * R = 0
+        for k in 0..NUM_LIMBS {
+            let c_prev = if k == 0 { E::F::zero() } else { carries[k - 1].clone() };
+            let lhs = in_amt_0[k].clone()
+                + in_amt_1[k].clone()
+                + c_prev
+                - change_amt[k].clone()
+                - fee_limbs[k].clone();
+            if k < NUM_CARRIES {
+                eval.add_constraint(lhs - carries[k].clone() * radix.clone());
+            } else {
+                eval.add_constraint(lhs);
             }
-            eval.add_constraint(recon - amt);
+        }
+
+        // Limb range checks: each of 16 limbs must fit in LIMB_BITS bits
+        let all_limbs: [&[E::F; NUM_LIMBS]; FEE_NUM_AMOUNTS] =
+            [&in_amt_0, &in_amt_1, &change_amt, &fee_limbs];
+        for limbs in all_limbs {
+            for limb in limbs {
+                let mut recon = E::F::zero();
+                let mut p2 = E::F::one();
+                for _ in 0..LIMB_BITS {
+                    let bit = eval.next_trace_mask();
+                    eval.add_constraint(bit.clone() * (bit.clone() - E::F::one()));
+                    recon += bit * p2.clone();
+                    p2 *= two.clone();
+                }
+                eval.add_constraint(recon - limb.clone());
+            }
         }
 
         let owner_out = poseidon2_air::constrain_hash2(
@@ -136,30 +180,40 @@ impl FrameworkEval for HushFeeSidecarEval {
 
         let hush_asset = E::F::from(M31::from(AssetId::Hush as u32));
 
-        let cm0_out = poseidon2_air::constrain_hash_many_4(
+        // Note commitments with 4-limb amounts: H(asset, L0, L1, L2, L3, owner, randomness)
+        let cm0_out = poseidon2_air::constrain_hash_many_7(
             &mut eval,
             hush_asset.clone(),
-            in_amt_0.clone(),
+            in_amt_0[0].clone(),
+            in_amt_0[1].clone(),
+            in_amt_0[2].clone(),
+            in_amt_0[3].clone(),
             owner_out.clone(),
             in_rand_0,
             poseidon2::DOMAIN_NOTE_CM,
         );
         eval.add_constraint(in_cm_0.clone() - cm0_out);
 
-        let cm1_out = poseidon2_air::constrain_hash_many_4(
+        let cm1_out = poseidon2_air::constrain_hash_many_7(
             &mut eval,
             hush_asset.clone(),
-            in_amt_1.clone(),
+            in_amt_1[0].clone(),
+            in_amt_1[1].clone(),
+            in_amt_1[2].clone(),
+            in_amt_1[3].clone(),
             owner_out.clone(),
             in_rand_1,
             poseidon2::DOMAIN_NOTE_CM,
         );
         eval.add_constraint(in_cm_1.clone() - cm1_out);
 
-        let change_cm_out = poseidon2_air::constrain_hash_many_4(
+        let change_cm_out = poseidon2_air::constrain_hash_many_7(
             &mut eval,
             hush_asset,
-            change_amt.clone(),
+            change_amt[0].clone(),
+            change_amt[1].clone(),
+            change_amt[2].clone(),
+            change_amt[3].clone(),
             owner_out,
             change_rand,
             poseidon2::DOMAIN_NOTE_CM,
@@ -179,7 +233,7 @@ pub struct HushFeePublicData {
     pub note_root: u32,
     pub tx_binding_hash: u32,
     pub sender_binding_tag: u32,
-    pub fee_amount: u32,
+    pub fee_amount: u64,
     pub null_0: u32,
     pub null_1: u32,
     pub change_cm: u32,
@@ -225,6 +279,30 @@ fn gen_merkle_path_trace(leaf: M31, path: &[(u32, u32); MERKLE_DEPTH]) -> Vec<M3
     result
 }
 
+/// Decompose u64 amounts into limbs and compute carries for HUSH fee balance conservation.
+/// Conservation: in0 + in1 = change + fee
+fn compute_fee_carries(witness: &HushFeeWitness) -> [i32; NUM_CARRIES] {
+    let in0 = amount_to_limbs(witness.in_amt_0);
+    let in1 = amount_to_limbs(witness.in_amt_1);
+    let ch = amount_to_limbs(witness.change_amt);
+    let fee = amount_to_limbs(witness.fee_amount);
+
+    let mut carries = [0i32; NUM_CARRIES];
+    let mut c_prev = 0i32;
+    for k in 0..NUM_LIMBS {
+        let delta = i32::from(in0[k] as i16) + i32::from(in1[k] as i16) + c_prev
+            - i32::from(ch[k] as i16) - i32::from(fee[k] as i16);
+        if k < NUM_CARRIES {
+            debug_assert_eq!(delta % (crate::types::RADIX as i32), 0, "carry not exact at limb {k}");
+            carries[k] = delta / (crate::types::RADIX as i32);
+            c_prev = carries[k];
+        } else {
+            debug_assert_eq!(delta, 0, "top limb conservation failed");
+        }
+    }
+    carries
+}
+
 fn gen_trace(
     witness: &HushFeeWitness,
     log_num_rows: u32,
@@ -235,80 +313,107 @@ fn gen_trace(
     let sk = M31::from(witness.sk);
     let owner = poseidon2::derive_owner(sk);
     let hush_asset = M31::from(AssetId::Hush as u32);
-
-    let in_amt_0 = M31::from(witness.in_amt_0);
     let in_rand_0 = M31::from(witness.in_rand_0);
-    let in_amt_1 = M31::from(witness.in_amt_1);
     let in_rand_1 = M31::from(witness.in_rand_1);
-    let in_cm_0 = poseidon2::note_commitment(hush_asset, in_amt_0, owner, in_rand_0);
-    let in_cm_1 = poseidon2::note_commitment(hush_asset, in_amt_1, owner, in_rand_1);
+    let change_rand = M31::from(witness.change_rand);
+
+    // Decompose amounts into 4 limbs each
+    let in0_limbs = amount_to_limbs(witness.in_amt_0);
+    let in1_limbs = amount_to_limbs(witness.in_amt_1);
+    let ch_limbs = amount_to_limbs(witness.change_amt);
+    let fee_limbs = amount_to_limbs(witness.fee_amount);
+
+    let in0_m31: [M31; NUM_LIMBS] = core::array::from_fn(|i| M31::from(in0_limbs[i]));
+    let in1_m31: [M31; NUM_LIMBS] = core::array::from_fn(|i| M31::from(in1_limbs[i]));
+    let ch_m31: [M31; NUM_LIMBS] = core::array::from_fn(|i| M31::from(ch_limbs[i]));
+    let fee_m31: [M31; NUM_LIMBS] = core::array::from_fn(|i| M31::from(fee_limbs[i]));
+
+    // Note commitments with 7 inputs: (asset, L0, L1, L2, L3, owner, randomness)
+    let in_cm_0 = poseidon2::note_commitment(
+        hush_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner, in_rand_0,
+    );
+    let in_cm_1 = poseidon2::note_commitment(
+        hush_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner, in_rand_1,
+    );
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
-    let change_amt = M31::from(witness.change_amt);
-    let change_rand = M31::from(witness.change_rand);
-    let fee_amount = M31::from(witness.fee_amount);
-    let change_cm = poseidon2::note_commitment(hush_asset, change_amt, owner, change_rand);
+    let change_cm = poseidon2::note_commitment(
+        hush_asset, ch_m31[0], ch_m31[1], ch_m31[2], ch_m31[3], owner, change_rand,
+    );
     let pub_note_root = M31::from(witness.note_root);
     let null_diff = null_0 - null_1;
     let null_diff_inv =
         if null_diff == M31::from(0u32) { M31::from(0u32) } else { null_diff.inverse() };
 
+    // Compute carries for balance conservation
+    let carries = compute_fee_carries(witness);
+    let carry_bits: [[M31; CARRY_BITS]; NUM_CARRIES] = core::array::from_fn(|k| {
+        let biased = (carries[k] + CARRY_BIAS as i32) as u32;
+        core::array::from_fn(|b| M31::from((biased >> b) & 1))
+    });
+
+    // Hash intermediates (7-input for note commitments, 2-input for owner/nullifiers)
     let owner_hash_cols =
         poseidon2_air::gen_hash2_intermediates(sk, M31::from(0u32), poseidon2::DOMAIN_OWNER);
     let null0_hash_cols =
         poseidon2_air::gen_hash2_intermediates(sk, in_cm_0, poseidon2::DOMAIN_NULLIFIER);
     let null1_hash_cols =
         poseidon2_air::gen_hash2_intermediates(sk, in_cm_1, poseidon2::DOMAIN_NULLIFIER);
-    let cm0_hash_cols = poseidon2_air::gen_hash_many_4_intermediates(
-        hush_asset,
-        in_amt_0,
-        owner,
-        in_rand_0,
+    let cm0_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
+        hush_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner, in_rand_0,
         poseidon2::DOMAIN_NOTE_CM,
     );
-    let cm1_hash_cols = poseidon2_air::gen_hash_many_4_intermediates(
-        hush_asset,
-        in_amt_1,
-        owner,
-        in_rand_1,
+    let cm1_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
+        hush_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner, in_rand_1,
         poseidon2::DOMAIN_NOTE_CM,
     );
-    let change_hash_cols = poseidon2_air::gen_hash_many_4_intermediates(
-        hush_asset,
-        change_amt,
-        owner,
-        change_rand,
+    let change_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
+        hush_asset, ch_m31[0], ch_m31[1], ch_m31[2], ch_m31[3], owner, change_rand,
         poseidon2::DOMAIN_NOTE_CM,
     );
     let note_path_0_data = gen_merkle_path_trace(in_cm_0, &witness.note_path_0);
     let note_path_1_data = gen_merkle_path_trace(in_cm_1, &witness.note_path_1);
 
     for r in 0..num_rows {
-        cols[0].set(r, sk);
-        cols[1].set(r, owner);
-        cols[2].set(r, in_amt_0);
-        cols[3].set(r, in_rand_0);
-        cols[4].set(r, in_amt_1);
-        cols[5].set(r, in_rand_1);
-        cols[6].set(r, in_cm_0);
-        cols[7].set(r, in_cm_1);
-        cols[8].set(r, null_0);
-        cols[9].set(r, null_1);
-        cols[10].set(r, change_amt);
-        cols[11].set(r, change_rand);
-        cols[12].set(r, fee_amount);
-        cols[13].set(r, change_cm);
-        cols[14].set(r, pub_note_root);
-        cols[15].set(r, null_diff_inv);
+        let mut col = 0usize;
+        let mut set = |c: &mut usize, val: M31| { cols[*c].set(r, val); *c += 1; };
 
-        let amts = [witness.in_amt_0, witness.in_amt_1, witness.change_amt, witness.fee_amount];
-        for (ai, &av) in amts.iter().enumerate() {
-            for b in 0..AMT_BITS {
-                cols[16 + ai * AMT_BITS + b].set(r, M31::from((av >> b) & 1));
+        set(&mut col, sk);           // 0
+        set(&mut col, owner);        // 1
+        for &v in &in0_m31 { set(&mut col, v); }  // 2-5
+        set(&mut col, in_rand_0);    // 6
+        for &v in &in1_m31 { set(&mut col, v); }  // 7-10
+        set(&mut col, in_rand_1);    // 11
+        set(&mut col, in_cm_0);      // 12
+        set(&mut col, in_cm_1);      // 13
+        set(&mut col, null_0);       // 14
+        set(&mut col, null_1);       // 15
+        for &v in &ch_m31 { set(&mut col, v); }   // 16-19
+        set(&mut col, change_rand);  // 20
+        for &v in &fee_m31 { set(&mut col, v); }   // 21-24
+        set(&mut col, change_cm);    // 25
+        set(&mut col, pub_note_root);// 26
+        set(&mut col, null_diff_inv);// 27
+        // Carry bits
+        for k in 0..NUM_CARRIES {
+            for b in 0..CARRY_BITS {
+                set(&mut col, carry_bits[k][b]);
+            }
+        } // 28-33
+        assert_eq!(col, FEE_BASE_AUX_COLS);
+
+        // Limb range decomposition: 4 amounts x 4 limbs x 15 bits
+        let all_limb_vals = [in0_limbs, in1_limbs, ch_limbs, fee_limbs];
+        for limbs in &all_limb_vals {
+            for &lv in limbs {
+                for b in 0..LIMB_BITS {
+                    cols[col].set(r, M31::from((lv >> b) & 1));
+                    col += 1;
+                }
             }
         }
+        assert_eq!(col, FEE_BASE_AUX_COLS + FEE_LIMB_RANGE_COLS);
 
-        let hash_base = 16 + AMT_RANGE_COLS;
         let h = poseidon2_air::HASH_INTERMEDIATE_COLS;
         let all_hashes: [&Vec<M31>; NUM_HASHES] = [
             &owner_hash_cols,
@@ -318,20 +423,22 @@ fn gen_trace(
             &cm1_hash_cols,
             &change_hash_cols,
         ];
-        for (hi, hash_cols) in all_hashes.iter().enumerate() {
+        for hash_cols in &all_hashes {
             for i in 0..h {
-                cols[hash_base + hi * h + i].set(r, hash_cols[i]);
+                cols[col + i].set(r, hash_cols[i]);
             }
+            col += h;
         }
 
-        let merkle_base = hash_base + NUM_HASHES * h;
         let path_cols = MERKLE_DEPTH * MERKLE_LEVEL_COLS;
         let all_paths: [&Vec<M31>; 2] = [&note_path_0_data, &note_path_1_data];
-        for (pi, path_data) in all_paths.iter().enumerate() {
+        for path_data in &all_paths {
             for i in 0..path_cols {
-                cols[merkle_base + pi * path_cols + i].set(r, path_data[i]);
+                cols[col + i].set(r, path_data[i]);
             }
+            col += path_cols;
         }
+        assert_eq!(col, NUM_COLS);
     }
 
     let domain = CanonicCoset::new(log_num_rows).circle_domain();
@@ -339,16 +446,17 @@ fn gen_trace(
 }
 
 fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, String> {
-    let total_in = witness.in_amt_0 + witness.in_amt_1;
-    let total_out = witness.change_amt + witness.fee_amount;
+    let total_in = witness.in_amt_0.checked_add(witness.in_amt_1)
+        .ok_or_else(|| "HUSH fee input amount overflow".to_string())?;
+    let total_out = witness.change_amt.checked_add(witness.fee_amount)
+        .ok_or_else(|| "HUSH fee output amount overflow".to_string())?;
     if total_in != total_out {
         return Err(format!(
             "HUSH fee balance conservation failed: inputs {total_in} != change+fee {total_out}"
         ));
     }
 
-    let expected_sender_binding_tag =
-        derive_sender_binding_tag(witness.sk, witness.tx_binding_hash);
+    let expected_sender_binding_tag = derive_sender_binding_tag(witness.sk, witness.tx_binding_hash);
     if witness.sender_binding_tag != expected_sender_binding_tag {
         return Err(format!(
             "sender_binding_tag mismatch: witness {}, expected {}",
@@ -359,17 +467,11 @@ fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, Strin
     let sk = M31::from(witness.sk);
     let owner = poseidon2::derive_owner(sk);
     let hush_asset = M31::from(AssetId::Hush as u32);
-    let in_cm_0 = poseidon2::note_commitment(
-        hush_asset,
-        M31::from(witness.in_amt_0),
-        owner,
-        M31::from(witness.in_rand_0),
+    let in_cm_0 = poseidon2::note_commitment_u64(
+        hush_asset, witness.in_amt_0, owner, M31::from(witness.in_rand_0),
     );
-    let in_cm_1 = poseidon2::note_commitment(
-        hush_asset,
-        M31::from(witness.in_amt_1),
-        owner,
-        M31::from(witness.in_rand_1),
+    let in_cm_1 = poseidon2::note_commitment_u64(
+        hush_asset, witness.in_amt_1, owner, M31::from(witness.in_rand_1),
     );
 
     let note_root = M31::from(witness.note_root);
@@ -386,11 +488,8 @@ fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, Strin
 
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
-    let change_cm = poseidon2::note_commitment(
-        hush_asset,
-        M31::from(witness.change_amt),
-        owner,
-        M31::from(witness.change_rand),
+    let change_cm = poseidon2::note_commitment_u64(
+        hush_asset, witness.change_amt, owner, M31::from(witness.change_rand),
     );
 
     Ok(HushFeePublicData {
@@ -464,7 +563,7 @@ pub fn verify_hush_fee(result: &ProofResult) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::payment_fixtures::{
-        insufficient_hush_fee_coverage_fixture, invalid_hush_change_fixture,
+        invalid_hush_change_fixture, insufficient_hush_fee_coverage_fixture,
         valid_usdc_hush_fee_fixture, valid_usdt_hush_fee_fixture,
         wrong_sender_binding_tag_hush_fee_fixture, wrong_tx_binding_hash_hush_fee_fixture,
     };

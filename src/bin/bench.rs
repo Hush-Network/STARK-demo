@@ -5,11 +5,11 @@ use hush_demo_stark::{
         accepted_payment_record, accepted_protocol_action_record, BlockAccountingBuilder,
         EpochAccumulator, ProtocolActionTx, ValidatorBlockParticipation, ValidatorStakeInfo,
     },
-    circuit, credential_issuance,
+    circuit, credential_issuance, poseidon2, time_window,
     measurement::{duration_to_ms, format_duration_ms},
     payment_fixtures::{valid_usdc_hush_fee_fixture, valid_usdc_same_asset_fixture},
     payment_tx::TxKind,
-    payment_validation, poseidon2, time_window,
+    payment_validation,
     types::MERKLE_DEPTH,
 };
 use stwo::core::fields::m31::M31;

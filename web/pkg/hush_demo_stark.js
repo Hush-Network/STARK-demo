@@ -194,7 +194,9 @@ export class ProofOutput {
 if (Symbol.dispose) ProofOutput.prototype[Symbol.dispose] = ProofOutput.prototype.free;
 
 /**
- * Proves a payment from raw parameters. Builds all witness data internally.
+ * High-level wrapper for the browser demo: takes simple payment parameters,
+ * computes randomness, builds Merkle trees and paths internally, proves and verifies.
+ * Returns a ProofOutput including proof_bytes for independent verification.
  * @param {number} epoch
  * @param {number} sk
  * @param {number} in_asset
@@ -398,16 +400,18 @@ export function prove_time_window_audit(window_start, window_end, amounts, times
  * @param {number} out_cm_0
  * @param {number} out_cm_1
  * @param {number} cred_null
+ * @param {number} tx_binding_hash
+ * @param {number} sender_binding_tag
  * @returns {string}
  */
-export function verify_serialized_proof(proof_b64, note_root, cred_root, epoch, null_0, null_1, out_cm_0, out_cm_1, cred_null) {
+export function verify_serialized_proof(proof_b64, note_root, cred_root, epoch, null_0, null_1, out_cm_0, out_cm_1, cred_null, tx_binding_hash, sender_binding_tag) {
     let deferred2_0;
     let deferred2_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passStringToWasm0(proof_b64, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len0 = WASM_VECTOR_LEN;
-        wasm.verify_serialized_proof(retptr, ptr0, len0, note_root, cred_root, epoch, null_0, null_1, out_cm_0, out_cm_1, cred_null);
+        wasm.verify_serialized_proof(retptr, ptr0, len0, note_root, cred_root, epoch, null_0, null_1, out_cm_0, out_cm_1, cred_null, tx_binding_hash, sender_binding_tag);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         deferred2_0 = r0;
@@ -417,6 +421,10 @@ export function verify_serialized_proof(proof_b64, note_root, cred_root, epoch, 
         wasm.__wbindgen_add_to_stack_pointer(16);
         wasm.__wbindgen_export(deferred2_0, deferred2_1, 1);
     }
+}
+
+export function wasm_init() {
+    wasm.wasm_init();
 }
 
 function __wbg_get_imports() {
@@ -557,6 +565,7 @@ function __wbg_finalize_init(instance, module) {
     cachedDataViewMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
+    wasm.__wbindgen_start();
     return wasm;
 }
 

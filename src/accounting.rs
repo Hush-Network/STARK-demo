@@ -20,8 +20,7 @@ pub struct AssetFeeBuckets {
 }
 
 impl AssetFeeBuckets {
-    pub fn increment(&mut self, asset: AssetId, amount: u32) -> Result<(), String> {
-        let amount = u64::from(amount);
+    pub fn increment(&mut self, asset: AssetId, amount: u64) -> Result<(), String> {
         match asset {
             AssetId::Hush => {
                 self.hush = self
@@ -73,16 +72,22 @@ impl AssetTxCounts {
     pub fn increment(&mut self, asset: AssetId) -> Result<(), String> {
         match asset {
             AssetId::Hush => {
-                self.hush =
-                    self.hush.checked_add(1).ok_or_else(|| "HUSH tx count overflow".to_string())?;
+                self.hush = self
+                    .hush
+                    .checked_add(1)
+                    .ok_or_else(|| "HUSH tx count overflow".to_string())?;
             }
             AssetId::Usdc => {
-                self.usdc =
-                    self.usdc.checked_add(1).ok_or_else(|| "USDC tx count overflow".to_string())?;
+                self.usdc = self
+                    .usdc
+                    .checked_add(1)
+                    .ok_or_else(|| "USDC tx count overflow".to_string())?;
             }
             AssetId::Usdt => {
-                self.usdt =
-                    self.usdt.checked_add(1).ok_or_else(|| "USDT tx count overflow".to_string())?;
+                self.usdt = self
+                    .usdt
+                    .checked_add(1)
+                    .ok_or_else(|| "USDT tx count overflow".to_string())?;
             }
         }
         Ok(())
@@ -94,7 +99,7 @@ pub struct AcceptedTxRecord {
     pub tx_id: u64,
     pub tx_kind: u32,
     pub fee_asset: u32,
-    pub fee_amount: u32,
+    pub fee_amount: u64,
     pub fee_schedule_version: u32,
 }
 
@@ -117,13 +122,13 @@ pub struct ProtocolActionTx {
     pub action_id: u64,
     pub tx_kind: u32,
     pub fee_asset: u32,
-    pub fee_amount: u32,
+    pub fee_amount: u64,
     pub fee_schedule_version: u32,
     pub replay_domain: u32,
 }
 
 impl ProtocolActionTx {
-    pub fn build(tx_kind: TxKind, action_id: u64, fee_amount: u32) -> Result<Self, String> {
+    pub fn build(tx_kind: TxKind, action_id: u64, fee_amount: u64) -> Result<Self, String> {
         if tx_kind == TxKind::Payment {
             return Err("ProtocolActionTx cannot use payment tx_kind".to_string());
         }
@@ -145,7 +150,10 @@ pub fn validate_protocol_action_tx(tx: &ProtocolActionTx) -> Result<TxKind, Stri
     }
     validate_tx_kind_fee_asset_policy(tx.tx_kind, None, tx.fee_asset)?;
     if tx.fee_schedule_version != PAYMENT_STANDARD_FEE_SCHEDULE_VERSION {
-        return Err(format!("unsupported fee_schedule_version {}", tx.fee_schedule_version));
+        return Err(format!(
+            "unsupported fee_schedule_version {}",
+            tx.fee_schedule_version
+        ));
     }
     if tx.replay_domain != PAYMENT_TX_V1_REPLAY_DOMAIN {
         return Err(format!("invalid replay_domain {}", tx.replay_domain));
@@ -327,7 +335,9 @@ impl EpochSettlement {
     }
 
     pub fn payout_record_for_validator(&self, validator_id: u32) -> Option<&ClaimablePayoutRecord> {
-        self.payout_records.iter().find(|record| record.validator_id == validator_id)
+        self.payout_records
+            .iter()
+            .find(|record| record.validator_id == validator_id)
     }
 }
 
@@ -416,18 +426,18 @@ impl EpochAccumulator {
 
         for validator in validator_set {
             let participation = participation_map.get(&validator.validator_id);
-            let entry =
-                self.validator_entitlements.entry(validator.validator_id).or_insert_with(|| {
-                    ValidatorEpochEntitlement {
-                        validator_id: validator.validator_id,
-                        payout_key: validator.payout_key,
-                        effective_stake: validator.effective_stake,
-                        present_blocks: 0,
-                        missed_blocks: 0,
-                        max_liveness_penalty_bps: 0,
-                        max_slash_penalty_bps: 0,
-                        entitlement: AssetFeeBuckets::default(),
-                    }
+            let entry = self
+                .validator_entitlements
+                .entry(validator.validator_id)
+                .or_insert_with(|| ValidatorEpochEntitlement {
+                    validator_id: validator.validator_id,
+                    payout_key: validator.payout_key,
+                    effective_stake: validator.effective_stake,
+                    present_blocks: 0,
+                    missed_blocks: 0,
+                    max_liveness_penalty_bps: 0,
+                    max_slash_penalty_bps: 0,
+                    entitlement: AssetFeeBuckets::default(),
                 });
 
             entry.effective_stake = validator.effective_stake;
@@ -435,8 +445,9 @@ impl EpochAccumulator {
             match participation {
                 Some(participation) if participation.signed_block => {
                     entry.present_blocks += 1;
-                    entry.max_liveness_penalty_bps =
-                        entry.max_liveness_penalty_bps.max(participation.liveness_penalty_bps);
+                    entry.max_liveness_penalty_bps = entry
+                        .max_liveness_penalty_bps
+                        .max(participation.liveness_penalty_bps);
                     entry.max_slash_penalty_bps =
                         entry.max_slash_penalty_bps.max(participation.slash_penalty_bps);
                 }
@@ -553,12 +564,11 @@ fn allocate_asset_bucket(
     }
 
     let total_weight = weights.iter().try_fold(0u128, |acc, (_, weight)| {
-        acc.checked_add(u128::from(*weight)).ok_or_else(|| "validator weight overflow".to_string())
+        acc.checked_add(u128::from(*weight))
+            .ok_or_else(|| "validator weight overflow".to_string())
     })?;
     if total_weight == 0 {
-        return Err(
-            "cannot allocate non-zero asset bucket with zero total validator weight".to_string()
-        );
+        return Err("cannot allocate non-zero asset bucket with zero total validator weight".to_string());
     }
 
     let mut distributed = 0u64;
@@ -578,7 +588,9 @@ fn allocate_asset_bucket(
         .checked_sub(distributed)
         .ok_or_else(|| "distributed payout exceeded asset bucket".to_string())?;
     remainders.sort_by(|(left_remainder, left_id), (right_remainder, right_id)| {
-        right_remainder.cmp(left_remainder).then(left_id.cmp(right_id))
+        right_remainder
+            .cmp(left_remainder)
+            .then(left_id.cmp(right_id))
     });
     for index in 0..leftover as usize {
         let validator_id = remainders[index].1;
@@ -657,12 +669,14 @@ mod tests {
         block
             .record_payment_bundle(&mode_b_tx, &mode_b_bundle)
             .expect("Mode B payment should count");
-        block.record_protocol_action(&action).expect("validator action should count");
+        block
+            .record_protocol_action(&action)
+            .expect("validator action should count");
         let record = block.finalize();
         record.validate().expect("block accounting should reconcile");
 
-        assert_eq!(record.fee_buckets.usdc, 5);
-        assert_eq!(record.fee_buckets.hush, 14);
+        assert_eq!(record.fee_buckets.usdc, 50);
+        assert_eq!(record.fee_buckets.hush, 59);
         assert_eq!(record.fee_buckets.usdt, 0);
         assert_eq!(record.tx_counts_by_asset.usdc, 1);
         assert_eq!(record.tx_counts_by_asset.hush, 2);
@@ -687,7 +701,9 @@ mod tests {
     fn test_per_block_totals_reconcile() {
         let (_, _, record) = build_mode_a_bundle_record();
         let mut block = BlockAccountingBuilder::new(12, 2);
-        block.record_accepted_tx_record(&record).expect("accepted record should count");
+        block
+            .record_accepted_tx_record(&record)
+            .expect("accepted record should count");
         let record = block.finalize();
         record.validate().expect("block accounting should reconcile");
     }
@@ -698,11 +714,15 @@ mod tests {
         let (_, _, mode_b_record) = build_mode_b_bundle_record();
 
         let mut block_a = BlockAccountingBuilder::new(20, 1);
-        block_a.record_accepted_tx_record(&mode_a_record).expect("accepted record should count");
+        block_a
+            .record_accepted_tx_record(&mode_a_record)
+            .expect("accepted record should count");
         let block_a = block_a.finalize();
 
         let mut block_b = BlockAccountingBuilder::new(21, 1);
-        block_b.record_accepted_tx_record(&mode_b_record).expect("accepted record should count");
+        block_b
+            .record_accepted_tx_record(&mode_b_record)
+            .expect("accepted record should count");
         let block_b = block_b.finalize();
 
         let validators = sample_validators();
@@ -715,7 +735,10 @@ mod tests {
             .apply_block(&block_b, &validators, &participation)
             .expect("second block should accrue");
 
-        assert_eq!(epoch.fee_pools(), AssetFeeBuckets { hush: 5, usdc: 5, usdt: 0 });
+        assert_eq!(
+            epoch.fee_pools(),
+            AssetFeeBuckets { hush: 50, usdc: 50, usdt: 0 }
+        );
     }
 
     #[test]
@@ -724,11 +747,15 @@ mod tests {
         let (_, _, mode_b_record) = build_mode_b_bundle_record();
 
         let mut block_a = BlockAccountingBuilder::new(30, 1);
-        block_a.record_accepted_tx_record(&mode_a_record).expect("accepted record should count");
+        block_a
+            .record_accepted_tx_record(&mode_a_record)
+            .expect("accepted record should count");
         let block_a = block_a.finalize();
 
         let mut block_b = BlockAccountingBuilder::new(31, 1);
-        block_b.record_accepted_tx_record(&mode_b_record).expect("accepted record should count");
+        block_b
+            .record_accepted_tx_record(&mode_b_record)
+            .expect("accepted record should count");
         let block_b = block_b.finalize();
 
         let validators = sample_validators();
@@ -758,14 +785,18 @@ mod tests {
             .expect("second block should accrue");
         let settlement = epoch.close().expect("epoch should close");
 
-        let validator_one =
-            settlement.validator_entitlements.get(&1).expect("validator 1 should accrue");
-        let validator_two =
-            settlement.validator_entitlements.get(&2).expect("validator 2 should accrue");
+        let validator_one = settlement
+            .validator_entitlements
+            .get(&1)
+            .expect("validator 1 should accrue");
+        let validator_two = settlement
+            .validator_entitlements
+            .get(&2)
+            .expect("validator 2 should accrue");
 
-        assert_eq!(validator_one.entitlement.usdc, 3);
-        assert_eq!(validator_two.entitlement.usdc, 2);
-        assert_eq!(validator_one.entitlement.hush, 5);
+        assert_eq!(validator_one.entitlement.usdc, 25);
+        assert_eq!(validator_two.entitlement.usdc, 25);
+        assert_eq!(validator_one.entitlement.hush, 50);
         assert_eq!(validator_two.entitlement.hush, 0);
         assert_eq!(validator_one.present_blocks, 2);
         assert_eq!(validator_two.missed_blocks, 1);
@@ -775,16 +806,23 @@ mod tests {
     fn test_mixed_basket_payout_reconciliation() {
         let (_, _, mode_a_record) = build_mode_a_bundle_record();
         let (_, _, mode_b_record) = build_mode_b_bundle_record();
-        let action = accepted_protocol_action_record(
-            &ProtocolActionTx::build(TxKind::IssuerAction, 44, 7)
-                .expect("issuer action should build"),
-        )
-        .expect("issuer action should validate");
+        let action =
+            accepted_protocol_action_record(
+                &ProtocolActionTx::build(TxKind::IssuerAction, 44, 7)
+                    .expect("issuer action should build"),
+            )
+            .expect("issuer action should validate");
 
         let mut block = BlockAccountingBuilder::new(40, 1);
-        block.record_accepted_tx_record(&mode_a_record).expect("accepted record should count");
-        block.record_accepted_tx_record(&mode_b_record).expect("accepted record should count");
-        block.record_accepted_tx_record(&action).expect("accepted record should count");
+        block
+            .record_accepted_tx_record(&mode_a_record)
+            .expect("accepted record should count");
+        block
+            .record_accepted_tx_record(&mode_b_record)
+            .expect("accepted record should count");
+        block
+            .record_accepted_tx_record(&action)
+            .expect("accepted record should count");
         let block = block.finalize();
 
         let validators = sample_validators();
@@ -796,8 +834,8 @@ mod tests {
         let payout_totals = settlement.total_payouts().expect("payouts should sum");
 
         assert_eq!(settlement.fee_pools, payout_totals);
-        assert_eq!(payout_totals.usdc, 5);
-        assert_eq!(payout_totals.hush, 12);
+        assert_eq!(payout_totals.usdc, 50);
+        assert_eq!(payout_totals.hush, 57);
         assert_eq!(payout_totals.usdt, 0);
         assert_eq!(settlement.payout_records.len(), 2);
     }
@@ -816,19 +854,23 @@ mod tests {
             .expect("credential action should build");
         validate_protocol_action_tx(&action).expect("credential action should accept HUSH");
 
-        assert!(validate_tx_kind_fee_asset_policy(
-            TxKind::CredentialStateAction.as_u32(),
-            None,
-            AssetId::Usdt as u32,
-        )
-        .is_err());
+        assert!(
+            validate_tx_kind_fee_asset_policy(
+                TxKind::CredentialStateAction.as_u32(),
+                None,
+                AssetId::Usdt as u32,
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_accounting_does_not_drift_from_validated_tx_inputs() {
         let (tx, bundle, record) = build_mode_b_bundle_record();
         let mut block = BlockAccountingBuilder::new(50, 1);
-        block.record_payment_bundle(&tx, &bundle).expect("validated bundle should count");
+        block
+            .record_payment_bundle(&tx, &bundle)
+            .expect("validated bundle should count");
         let block = block.finalize();
         assert_eq!(record.fee_asset, tx.descriptor.fee_asset);
         assert_eq!(record.fee_amount, tx.descriptor.fee_amount);
@@ -839,7 +881,9 @@ mod tests {
     fn test_same_tx_cannot_be_double_counted() {
         let (_, _, record) = build_mode_a_bundle_record();
         let mut block = BlockAccountingBuilder::new(60, 1);
-        block.record_accepted_tx_record(&record).expect("accepted record should count");
+        block
+            .record_accepted_tx_record(&record)
+            .expect("accepted record should count");
         assert!(block.record_accepted_tx_record(&record).is_err());
     }
 
@@ -847,7 +891,9 @@ mod tests {
     fn test_malformed_accounting_state_transition_rejected() {
         let (_, _, record) = build_mode_a_bundle_record();
         let mut block = BlockAccountingBuilder::new(70, 1);
-        block.record_accepted_tx_record(&record).expect("accepted record should count");
+        block
+            .record_accepted_tx_record(&record)
+            .expect("accepted record should count");
         let mut block = block.finalize();
         block.fee_buckets.usdc += 1;
 
@@ -862,7 +908,9 @@ mod tests {
         let (_, _, mode_b_record) = build_mode_b_bundle_record();
 
         let mut block = BlockAccountingBuilder::new(80, 1);
-        block.record_accepted_tx_record(&mode_b_record).expect("accepted record should count");
+        block
+            .record_accepted_tx_record(&mode_b_record)
+            .expect("accepted record should count");
         let block = block.finalize();
 
         let validators = sample_validators();
@@ -882,12 +930,18 @@ mod tests {
         ];
 
         let mut epoch = EpochAccumulator::new(7);
-        epoch.apply_block(&block, &validators, &participation).expect("block should accrue");
+        epoch
+            .apply_block(&block, &validators, &participation)
+            .expect("block should accrue");
         let settlement = epoch.close().expect("epoch should close");
-        let validator_one =
-            settlement.validator_entitlements.get(&1).expect("validator 1 should accrue");
-        let validator_two =
-            settlement.validator_entitlements.get(&2).expect("validator 2 should accrue");
+        let validator_one = settlement
+            .validator_entitlements
+            .get(&1)
+            .expect("validator 1 should accrue");
+        let validator_two = settlement
+            .validator_entitlements
+            .get(&2)
+            .expect("validator 2 should accrue");
 
         assert!(validator_two.entitlement.hush > validator_one.entitlement.hush);
         assert_eq!(validator_one.max_liveness_penalty_bps, 2_500);

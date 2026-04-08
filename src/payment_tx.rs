@@ -9,7 +9,7 @@ use crate::{
 pub const PAYMENT_TX_V1_VERSION: u32 = 1;
 pub const PAYMENT_TX_V1_REPLAY_DOMAIN: u32 = 1;
 pub const PAYMENT_STANDARD_FEE_SCHEDULE_VERSION: u32 = 1;
-pub const PAYMENT_STANDARD_FEE_AMOUNT: u32 = 5;
+pub const PAYMENT_STANDARD_FEE_AMOUNT: u64 = 50;
 pub const FEE_CLASS_PAYMENT_STANDARD: u32 = 1;
 pub const FEE_AUX_ROUTE_HUSH_SIDECAR: u32 = 1;
 
@@ -76,7 +76,7 @@ pub enum PaymentRoute {
 }
 
 impl PaymentRoute {
-    pub fn payment_fee_deduction(self, fee_amount: u32) -> u32 {
+    pub fn payment_fee_deduction(self, fee_amount: u64) -> u64 {
         match self {
             Self::SameAsset => fee_amount,
             Self::HushSidecar => 0,
@@ -94,27 +94,27 @@ pub struct FeeDescriptor {
     pub payment_asset: u32,
     pub fee_asset: u32,
     pub fee_class: u32,
-    pub fee_amount: u32,
+    pub fee_amount: u64,
     pub fee_schedule_version: u32,
     pub replay_domain: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteInput {
-    pub amount: u32,
+    pub amount: u64,
     pub randomness: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecipientIntent {
-    pub amount: u32,
+    pub amount: u64,
     pub owner: u32,
     pub randomness: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SenderChangeIntent {
-    pub amount: u32,
+    pub amount: u64,
     pub randomness: u32,
 }
 
@@ -257,7 +257,7 @@ impl PaymentTxV1 {
         Ok(tx)
     }
 
-    pub fn total_input_amount(&self) -> Result<u32, String> {
+    pub fn total_input_amount(&self) -> Result<u64, String> {
         self.inputs[0]
             .amount
             .checked_add(self.inputs[1].amount)
@@ -322,9 +322,7 @@ impl PaymentTxV1 {
     ) -> Result<HushFeeWitness, String> {
         let route = validate_payment_tx(self)?;
         if route != PaymentRoute::HushSidecar {
-            return Err(
-                "HUSH fee sidecar witness is only valid for Mode B transactions".to_string()
-            );
+            return Err("HUSH fee sidecar witness is only valid for Mode B transactions".to_string());
         }
 
         let expected_sender_binding_tag = derive_sender_binding_tag(sk, self.tx_binding_hash);
@@ -395,8 +393,8 @@ pub fn validate_tx_kind_fee_asset_policy(
     let fee_asset = AssetId::try_from_u32(fee_asset)?;
     match tx_kind {
         TxKind::Payment => {
-            let payment_asset = payment_asset
-                .ok_or_else(|| "payment tx_kind requires payment_asset".to_string())?;
+            let payment_asset =
+                payment_asset.ok_or_else(|| "payment tx_kind requires payment_asset".to_string())?;
             payment_route(payment_asset, fee_asset.as_u32()).map(|_| ())
         }
         TxKind::ValidatorAction
@@ -425,7 +423,7 @@ pub fn is_hush_only_action(tx_kind: u32) -> Result<bool, String> {
     ))
 }
 
-pub fn expected_fee_amount(payment_asset: u32, fee_asset: u32) -> Result<u32, String> {
+pub fn expected_fee_amount(payment_asset: u32, fee_asset: u32) -> Result<u64, String> {
     validate_tx_kind_fee_asset_policy(TX_KIND_PAYMENT, Some(payment_asset), fee_asset)?;
     Ok(PAYMENT_STANDARD_FEE_AMOUNT)
 }
@@ -446,19 +444,31 @@ pub fn compute_tx_binding_hash(tx: &PaymentTxV1) -> u32 {
     )
 }
 
+/// Split a u64 amount into two M31 elements (lo = lower 31 bits, hi = upper bits).
+/// Both halves are guaranteed to fit in M31 for amounts up to 2^60 - 1.
+fn amount_to_m31_pair(amount: u64) -> (M31, M31) {
+    let lo = (amount & 0x7FFF_FFFF) as u32;
+    let hi = (amount >> 31) as u32;
+    (M31::from(lo), M31::from(hi))
+}
+
 pub fn compute_mode_a_tx_binding_hash(
     replay_domain: u32,
     payment_asset: u32,
     fee_asset: u32,
     fee_class: u32,
-    fee_amount: u32,
+    fee_amount: u64,
     fee_schedule_version: u32,
-    recipient_amount: u32,
+    recipient_amount: u64,
     recipient_owner: u32,
     recipient_randomness: u32,
-    sender_change_amount: u32,
+    sender_change_amount: u64,
     sender_change_randomness: u32,
 ) -> u32 {
+    let (fee_lo, fee_hi) = amount_to_m31_pair(fee_amount);
+    let (recip_lo, recip_hi) = amount_to_m31_pair(recipient_amount);
+    let (change_lo, change_hi) = amount_to_m31_pair(sender_change_amount);
+
     let chunk_0 = poseidon2::domain_hash4(
         M31::from(replay_domain),
         M31::from(TX_KIND_PAYMENT),
@@ -468,20 +478,28 @@ pub fn compute_mode_a_tx_binding_hash(
     );
     let chunk_1 = poseidon2::domain_hash4(
         M31::from(fee_class),
-        M31::from(fee_amount),
+        fee_lo,
+        fee_hi,
         M31::from(fee_schedule_version),
-        M31::from(recipient_amount),
         poseidon2::DOMAIN_TX_BINDING,
     );
     let chunk_2 = poseidon2::domain_hash4(
+        recip_lo,
+        recip_hi,
         M31::from(recipient_owner),
         M31::from(recipient_randomness),
-        M31::from(sender_change_amount),
+        poseidon2::DOMAIN_TX_BINDING,
+    );
+    let chunk_3 = poseidon2::domain_hash4(
+        change_lo,
+        change_hi,
         M31::from(sender_change_randomness),
+        M31::from(0u32),
         poseidon2::DOMAIN_TX_BINDING,
     );
     let left = poseidon2::domain_hash2(chunk_0, chunk_1, poseidon2::DOMAIN_TX_BINDING);
-    poseidon2::domain_hash2(left, chunk_2, poseidon2::DOMAIN_TX_BINDING).0
+    let mid = poseidon2::domain_hash2(left, chunk_2, poseidon2::DOMAIN_TX_BINDING);
+    poseidon2::domain_hash2(mid, chunk_3, poseidon2::DOMAIN_TX_BINDING).0
 }
 
 pub fn derive_sender_binding_tag(sk: u32, tx_binding_hash: u32) -> u32 {
@@ -603,7 +621,7 @@ mod tests {
         assert_eq!(tx.descriptor.payment_asset, AssetId::Usdc as u32);
         assert_eq!(tx.descriptor.fee_asset, AssetId::Usdc as u32);
         assert_eq!(tx.descriptor.fee_amount, PAYMENT_STANDARD_FEE_AMOUNT);
-        assert_eq!(tx.sender_change.amount, 1_995);
+        assert_eq!(tx.sender_change.amount, 1_950);
         assert!(tx.attachment.fee_aux.is_none());
         validate_payment_tx(&tx).expect("builder output should validate");
     }
@@ -697,14 +715,20 @@ mod tests {
 
     #[test]
     fn test_hush_only_action_fee_policy() {
-        validate_tx_kind_fee_asset_policy(TX_KIND_VALIDATOR_ACTION, None, AssetId::Hush as u32)
-            .expect("validator action should accept HUSH");
-        assert!(validate_tx_kind_fee_asset_policy(
+        validate_tx_kind_fee_asset_policy(
             TX_KIND_VALIDATOR_ACTION,
             None,
-            AssetId::Usdc as u32,
+            AssetId::Hush as u32,
         )
-        .is_err());
+        .expect("validator action should accept HUSH");
+        assert!(
+            validate_tx_kind_fee_asset_policy(
+                TX_KIND_VALIDATOR_ACTION,
+                None,
+                AssetId::Usdc as u32,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -721,11 +745,13 @@ mod tests {
             AssetId::Hush as u32,
         )
         .expect("USDT HUSH sidecar path should be allowed");
-        assert!(validate_tx_kind_fee_asset_policy(
-            TX_KIND_PAYMENT,
-            Some(AssetId::Usdt as u32),
-            AssetId::Usdc as u32,
-        )
-        .is_err());
+        assert!(
+            validate_tx_kind_fee_asset_policy(
+                TX_KIND_PAYMENT,
+                Some(AssetId::Usdt as u32),
+                AssetId::Usdc as u32,
+            )
+            .is_err()
+        );
     }
 }

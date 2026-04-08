@@ -198,6 +198,28 @@ pub fn domain_hash4(a: M31, b: M31, c: M31, d: M31, domain: u32) -> M31 {
     hash_many_4_with_domain(a, b, c, d, domain)
 }
 
+fn hash_many_7_with_domain(
+    a: M31, b: M31, c: M31, d: M31, e: M31, f: M31, g: M31, domain: u32,
+) -> M31 {
+    let mut state = [M31::from(0u32); WIDTH];
+    state[0] = a;
+    state[1] = b;
+    state[2] = c;
+    state[3] = d;
+    state[4] = e;
+    state[5] = f;
+    state[6] = g;
+    state[RATE] = M31::from(domain);
+    permute_state(&mut state);
+    state[0]
+}
+
+pub fn domain_hash7(
+    a: M31, b: M31, c: M31, d: M31, e: M31, f: M31, g: M31, domain: u32,
+) -> M31 {
+    hash_many_7_with_domain(a, b, c, d, e, f, g, domain)
+}
+
 // Raw hash without domain separation, used in tests only.
 #[cfg(test)]
 pub(crate) fn hash2(a: M31, b: M31) -> M31 {
@@ -208,9 +230,28 @@ pub(crate) fn hash2(a: M31, b: M31) -> M31 {
     state[0]
 }
 
+// Note commitment with 4-limb amount encoding.
+// Preimage: (asset, amount_L0, amount_L1, amount_L2, amount_L3, owner, randomness)
+// This uses 7 of the 8 rate elements in a single Poseidon2 permutation.
 // TODO(prod): commitments should output multiple field elements (QM31) for collision resistance
-pub fn note_commitment(asset: M31, amount: M31, owner: M31, randomness: M31) -> M31 {
-    hash_many_4_with_domain(asset, amount, owner, randomness, DOMAIN_NOTE_CM)
+pub fn note_commitment(
+    asset: M31, a0: M31, a1: M31, a2: M31, a3: M31, owner: M31, randomness: M31,
+) -> M31 {
+    hash_many_7_with_domain(asset, a0, a1, a2, a3, owner, randomness, DOMAIN_NOTE_CM)
+}
+
+/// Convenience wrapper: decompose a u64 amount into 4 limbs and compute note commitment.
+pub fn note_commitment_u64(asset: M31, amount: u64, owner: M31, randomness: M31) -> M31 {
+    let limbs = crate::types::amount_to_limbs(amount);
+    note_commitment(
+        asset,
+        M31::from(limbs[0]),
+        M31::from(limbs[1]),
+        M31::from(limbs[2]),
+        M31::from(limbs[3]),
+        owner,
+        randomness,
+    )
 }
 
 pub fn credential_commitment(issuer: M31, owner: M31, expiry: M31, secret: M31) -> M31 {
@@ -586,50 +627,51 @@ mod tests {
     #[test]
     fn test_commitment_binding() {
         // Changing any single input to note_commitment changes the output
-        let base = note_commitment(
+        // Using note_commitment_u64(asset, amount_u64, owner, randomness)
+        let base = note_commitment_u64(
             M31::from(1u32),
-            M31::from(100u32),
+            100u64,
             M31::from(50u32),
             M31::from(999u32),
         );
-        // Change owner
+        // Change asset
         assert_ne!(
             base,
-            note_commitment(
+            note_commitment_u64(
                 M31::from(2u32),
-                M31::from(100u32),
+                100u64,
                 M31::from(50u32),
-                M31::from(999u32)
+                M31::from(999u32),
             )
         );
         // Change amount
         assert_ne!(
             base,
-            note_commitment(
+            note_commitment_u64(
                 M31::from(1u32),
-                M31::from(101u32),
+                101u64,
                 M31::from(50u32),
-                M31::from(999u32)
+                M31::from(999u32),
             )
         );
-        // Change asset_id
+        // Change owner
         assert_ne!(
             base,
-            note_commitment(
+            note_commitment_u64(
                 M31::from(1u32),
-                M31::from(100u32),
+                100u64,
                 M31::from(51u32),
-                M31::from(999u32)
+                M31::from(999u32),
             )
         );
         // Change blinding
         assert_ne!(
             base,
-            note_commitment(
+            note_commitment_u64(
                 M31::from(1u32),
-                M31::from(100u32),
+                100u64,
                 M31::from(50u32),
-                M31::from(998u32)
+                M31::from(998u32),
             )
         );
     }
@@ -790,15 +832,15 @@ mod tests {
 
     #[test]
     fn test_note_commitment() {
-        let cm = note_commitment(
+        let cm = note_commitment_u64(
             M31::from(1u32),
-            M31::from(7000u32),
+            7000u64,
             M31::from(9999u32),
             M31::from(111u32),
         );
-        let cm2 = note_commitment(
+        let cm2 = note_commitment_u64(
             M31::from(1u32),
-            M31::from(7000u32),
+            7000u64,
             M31::from(9999u32),
             M31::from(111u32),
         );
@@ -910,13 +952,13 @@ mod proptests {
             owner in 1u32..((1u32 << 31) - 2),
             rand in 0u32..((1u32 << 31) - 2),
         ) {
-            let base = note_commitment(
-                M31::from(asset), M31::from(amt), M31::from(owner), M31::from(rand),
+            let base = note_commitment_u64(
+                M31::from(asset), u64::from(amt), M31::from(owner), M31::from(rand),
             );
             // Changing any single input must change the output
-            let c1 = note_commitment(
+            let c1 = note_commitment_u64(
                 M31::from(asset.wrapping_add(1) % ((1u32 << 31) - 1)),
-                M31::from(amt), M31::from(owner), M31::from(rand),
+                u64::from(amt), M31::from(owner), M31::from(rand),
             );
             prop_assert_ne!(base, c1);
         }

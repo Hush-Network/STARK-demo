@@ -33,7 +33,9 @@ export class ProofOutput {
 }
 
 /**
- * Proves a payment from raw parameters. Builds all witness data internally.
+ * High-level wrapper for the browser demo: takes simple payment parameters,
+ * computes randomness, builds Merkle trees and paths internally, proves and verifies.
+ * Returns a ProofOutput including proof_bytes for independent verification.
  */
 export function build_witness_and_prove(epoch: number, sk: number, in_asset: number, in_amt_0: number, in_amt_1: number, out_amt_0: number, out_owner_0: number, out_amt_1: number, cred_issuer: number, cred_expiry: number, cred_secret: number): ProofOutput;
 
@@ -61,12 +63,15 @@ export function prove_time_window_audit(window_start: number, window_end: number
  * proof_b64: base64-encoded JSON of the serialized StarkProof.
  * Returns a JS string: "ok" on success, error message on failure.
  */
-export function verify_serialized_proof(proof_b64: string, note_root: number, cred_root: number, epoch: number, null_0: number, null_1: number, out_cm_0: number, out_cm_1: number, cred_null: number): string;
+export function verify_serialized_proof(proof_b64: string, note_root: number, cred_root: number, epoch: number, null_0: number, null_1: number, out_cm_0: number, out_cm_1: number, cred_null: number, tx_binding_hash: number, sender_binding_tag: number): string;
+
+export function wasm_init(): void;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly wasm_init: () => void;
     readonly __wbg_proofoutput_free: (a: number, b: number) => void;
     readonly proofoutput_success: (a: number) => number;
     readonly proofoutput_message: (a: number, b: number) => void;
@@ -90,7 +95,7 @@ export interface InitOutput {
     readonly auditoutput_prove_time_ms: (a: number) => number;
     readonly prove_time_window_audit: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => number;
     readonly build_witness_and_prove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => number;
-    readonly verify_serialized_proof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
+    readonly verify_serialized_proof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => void;
     readonly compute_credential_root: (a: number, b: number, c: number, d: number) => number;
     readonly compute_note_root: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly compute_merkle_path: (a: number, b: number, c: number, d: number) => void;
@@ -99,6 +104,7 @@ export interface InitOutput {
     readonly __wbindgen_export: (a: number, b: number, c: number) => void;
     readonly __wbindgen_export2: (a: number, b: number) => number;
     readonly __wbindgen_export3: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_start: () => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;

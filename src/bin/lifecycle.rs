@@ -5,11 +5,8 @@
 use std::collections::HashSet;
 
 use hush_demo_stark::{
-    circuit, credential_issuance,
-    payment_tx::{
-        compute_mode_a_tx_binding_hash, derive_sender_binding_tag, PAYMENT_TX_V1_REPLAY_DOMAIN,
-    },
-    poseidon2, time_window,
+    circuit, credential_issuance, poseidon2, time_window,
+    payment_tx::{compute_mode_a_tx_binding_hash, derive_sender_binding_tag, PAYMENT_TX_V1_REPLAY_DOMAIN},
     types::{PaymentWitness, MERKLE_DEPTH},
 };
 use stwo::core::fields::m31::M31;
@@ -82,15 +79,15 @@ fn build_payment_witness(
     sk: u32,
     in_asset: u32,
     in_idx_0: usize,
-    in_amt_0: u32,
+    in_amt_0: u64,
     in_rand_0: u32,
     in_idx_1: usize,
-    in_amt_1: u32,
+    in_amt_1: u64,
     in_rand_1: u32,
-    out_amt_0: u32,
+    out_amt_0: u64,
     out_owner_0: u32,
     out_rand_0: u32,
-    out_amt_1: u32,
+    out_amt_1: u64,
     out_rand_1: u32,
     cred_issuer: u32,
     cred_expiry: u32,
@@ -115,7 +112,7 @@ fn build_payment_witness(
         in_asset,
         in_asset,
         1,
-        0,
+        0u64,
         1,
         out_amt_0,
         out_owner_0,
@@ -213,9 +210,9 @@ fn main() {
     println!("\nStep 3: Create initial notes for Alice");
     let asset = M31::from(1u32);
     let note_0 =
-        poseidon2::note_commitment(asset, M31::from(7000u32), alice_owner, M31::from(111u32));
+        poseidon2::note_commitment_u64(asset, 7000u64, alice_owner, M31::from(111u32));
     let note_1 =
-        poseidon2::note_commitment(asset, M31::from(3000u32), alice_owner, M31::from(222u32));
+        poseidon2::note_commitment_u64(asset, 3000u64, alice_owner, M31::from(222u32));
     let idx_0 = ledger.add_note(note_0);
     let idx_1 = ledger.add_note(note_1);
     println!("  Note {}: 7000 units (cm: {})", idx_0, note_0.0);
@@ -278,7 +275,7 @@ fn main() {
     // Alice's change note is at change_idx. She needs a second note — use a zero-value dummy.
     println!("\nStep 5: Second payment (Alice spends 2000 change -> 1500 + 500)");
     let dummy_note =
-        poseidon2::note_commitment(asset, M31::from(0u32), alice_owner, M31::from(555u32));
+        poseidon2::note_commitment_u64(asset, 0u64, alice_owner, M31::from(555u32));
     let dummy_idx = ledger.add_note(dummy_note);
 
     // Reset credential nullifier set for new epoch
