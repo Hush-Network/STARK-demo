@@ -18,8 +18,8 @@ struct LedgerState {
     note_tree: poseidon2::SparseMerkleTree,
     cred_tree: poseidon2::SparseMerkleTree,
     issuer_tree: poseidon2::SparseMerkleTree,
-    nullifier_set: HashSet<u32>,
-    cred_nullifier_set: HashSet<u32>,
+    nullifier_set: HashSet<[u32; 4]>,
+    cred_nullifier_set: HashSet<[u32; 4]>,
     next_note_idx: usize,
 }
 
@@ -35,37 +35,45 @@ impl LedgerState {
         }
     }
 
-    fn add_note(&mut self, commitment: M31) -> usize {
+    fn add_note(&mut self, commitment: poseidon2::HashOut) -> usize {
         let idx = self.next_note_idx;
         self.note_tree.set_leaf(idx, commitment);
         self.next_note_idx += 1;
         idx
     }
 
-    fn add_credential(&mut self, index: usize, commitment: M31) {
+    fn add_credential(&mut self, index: usize, commitment: poseidon2::HashOut) {
         self.cred_tree.set_leaf(index, commitment);
     }
 
-    fn add_issuer(&mut self, index: usize, issuer_id: M31) {
+    fn add_issuer(&mut self, index: usize, issuer_id: poseidon2::HashOut) {
         self.issuer_tree.set_leaf(index, issuer_id);
     }
 
+    fn note_root_u32(&self) -> [u32; 4] {
+        poseidon2::hashout_to_u32_array(self.note_tree.root())
+    }
+
+    fn cred_root_u32(&self) -> [u32; 4] {
+        poseidon2::hashout_to_u32_array(self.cred_tree.root())
+    }
+
     fn apply_payment(&mut self, public_data: &circuit::PaymentPublicData) -> Result<(), String> {
-        if public_data.note_root != self.note_tree.root().0 {
+        if public_data.note_root != self.note_root_u32() {
             return Err("Note root mismatch".to_string());
         }
-        if public_data.cred_root != self.cred_tree.root().0 {
+        if public_data.cred_root != self.cred_root_u32() {
             return Err("Credential root mismatch".to_string());
         }
         if self.nullifier_set.contains(&public_data.null_0) {
-            return Err(format!("Double-spend: nullifier {} already spent", public_data.null_0));
+            return Err(format!("Double-spend: nullifier {:?} already spent", public_data.null_0));
         }
         if self.nullifier_set.contains(&public_data.null_1) {
-            return Err(format!("Double-spend: nullifier {} already spent", public_data.null_1));
+            return Err(format!("Double-spend: nullifier {:?} already spent", public_data.null_1));
         }
         if self.cred_nullifier_set.contains(&public_data.cred_null) {
             return Err(format!(
-                "Credential nullifier {} already used this epoch",
+                "Credential nullifier {:?} already used this epoch",
                 public_data.cred_null
             ));
         }
@@ -74,6 +82,14 @@ impl LedgerState {
         self.cred_nullifier_set.insert(public_data.cred_null);
         Ok(())
     }
+}
+
+fn path_to_u32(path_vec: &[(poseidon2::HashOut, u32)]) -> [([u32; 4], u32); MERKLE_DEPTH] {
+    let mut out = [([0u32; 4], 0u32); MERKLE_DEPTH];
+    for i in 0..MERKLE_DEPTH {
+        out[i] = (poseidon2::hashout_to_u32_array(path_vec[i].0), path_vec[i].1);
+    }
+    out
 }
 
 fn build_payment_witness(
@@ -88,7 +104,7 @@ fn build_payment_witness(
     in_amt_1: u64,
     in_rand_1: u32,
     out_amt_0: u64,
-    out_owner_0: u32,
+    out_owner_0: [u32; 4],
     out_rand_0: u32,
     out_amt_1: u64,
     out_rand_1: u32,
@@ -97,18 +113,9 @@ fn build_payment_witness(
     cred_secret: u32,
     cred_idx: usize,
 ) -> PaymentWitness {
-    let note_path_0_vec = ledger.note_tree.path(in_idx_0);
-    let note_path_1_vec = ledger.note_tree.path(in_idx_1);
-    let cred_path_vec = ledger.cred_tree.path(cred_idx);
-
-    let mut note_path_0 = [(0u32, 0u32); MERKLE_DEPTH];
-    let mut note_path_1 = [(0u32, 0u32); MERKLE_DEPTH];
-    let mut cred_path = [(0u32, 0u32); MERKLE_DEPTH];
-    for i in 0..MERKLE_DEPTH {
-        note_path_0[i] = (note_path_0_vec[i].0 .0, note_path_0_vec[i].1);
-        note_path_1[i] = (note_path_1_vec[i].0 .0, note_path_1_vec[i].1);
-        cred_path[i] = (cred_path_vec[i].0 .0, cred_path_vec[i].1);
-    }
+    let note_path_0 = path_to_u32(&ledger.note_tree.path(in_idx_0));
+    let note_path_1 = path_to_u32(&ledger.note_tree.path(in_idx_1));
+    let cred_path = path_to_u32(&ledger.cred_tree.path(cred_idx));
 
     let tx_binding_hash = compute_mode_a_tx_binding_hash(
         PAYMENT_TX_V1_REPLAY_DOMAIN,
@@ -126,8 +133,8 @@ fn build_payment_witness(
 
     PaymentWitness {
         epoch,
-        note_root: ledger.note_tree.root().0,
-        cred_root: ledger.cred_tree.root().0,
+        note_root: ledger.note_root_u32(),
+        cred_root: ledger.cred_root_u32(),
         sk,
         in_asset,
         in_amt_0,
@@ -155,6 +162,14 @@ fn build_payment_witness(
     }
 }
 
+fn fmt_hashout(h: &[u32; 4]) -> String {
+    format!("{:08x}{:08x}{:08x}{:08x}", h[0], h[1], h[2], h[3])
+}
+
+fn fmt_hashout_m31(h: poseidon2::HashOut) -> String {
+    fmt_hashout(&poseidon2::hashout_to_u32_array(h))
+}
+
 fn main() {
     println!("\n=== Hush Network: Full Protocol Lifecycle ===");
     println!("Three circuits: Credential Issuance + Payment + Time-Window Audit");
@@ -168,8 +183,8 @@ fn main() {
     let issuer_key = 42u32;
     let issuer_id = poseidon2::derive_issuer_id(M31::from(issuer_key));
     ledger.add_issuer(0, issuer_id);
-    println!("  Issuer ID: {} (derived from key)", issuer_id.0);
-    println!("  Issuer tree root: {}", ledger.issuer_tree.root().0);
+    println!("  Issuer ID: {} (derived from key)", fmt_hashout_m31(issuer_id));
+    println!("  Issuer tree root: {}", fmt_hashout_m31(ledger.issuer_tree.root()));
 
     // --- Step 2: Credential issuance (CIRCUIT 1) ---
     println!("\nStep 2: Credential issuance circuit");
@@ -185,16 +200,17 @@ fn main() {
     );
 
     let issuer_path_vec = ledger.issuer_tree.path(0);
-    let mut issuer_path = [(0u32, 0u32); MERKLE_DEPTH];
+    let mut issuer_path = [([0u32; 4], 0u32); MERKLE_DEPTH];
     for i in 0..MERKLE_DEPTH {
-        issuer_path[i] = (issuer_path_vec[i].0 .0, issuer_path_vec[i].1);
+        issuer_path[i] =
+            (poseidon2::hashout_to_u32_array(issuer_path_vec[i].0), issuer_path_vec[i].1);
     }
 
     let issuance_witness = credential_issuance::IssuanceWitness {
-        issuer_root: ledger.issuer_tree.root().0,
-        credential_commitment: cred_cm.0,
+        issuer_root: poseidon2::hashout_to_u32_array(ledger.issuer_tree.root()),
+        credential_commitment: poseidon2::hashout_to_u32_array(cred_cm),
         issuer_key,
-        subject: alice_owner.0,
+        subject: poseidon2::hashout_to_u32_array(alice_owner),
         expiry: cred_expiry,
         secret: cred_secret,
         issuer_path,
@@ -204,10 +220,13 @@ fn main() {
     let start = std::time::Instant::now();
     credential_issuance::prove_issuance(&issuance_witness).expect("Issuance proof failed");
     println!("done ({} ms, proved + verified)", start.elapsed().as_millis());
-    println!("  Credential commitment: {}", cred_cm.0);
+    println!("  Credential commitment: {}", fmt_hashout_m31(cred_cm));
 
     ledger.add_credential(0, cred_cm);
-    println!("  Credential registered in ledger (cred tree root: {})", ledger.cred_tree.root().0);
+    println!(
+        "  Credential registered in ledger (cred tree root: {})",
+        fmt_hashout_m31(ledger.cred_tree.root())
+    );
 
     // --- Step 3: Create initial notes for Alice ---
     println!("\nStep 3: Create initial notes for Alice");
@@ -216,12 +235,14 @@ fn main() {
     let note_1 = poseidon2::note_commitment_u64(asset, 3000u64, alice_owner, M31::from(222u32));
     let idx_0 = ledger.add_note(note_0);
     let idx_1 = ledger.add_note(note_1);
-    println!("  Note {}: 7000 units (cm: {})", idx_0, note_0.0);
-    println!("  Note {}: 3000 units (cm: {})", idx_1, note_1.0);
+    println!("  Note {}: 7000 units (cm: {})", idx_0, fmt_hashout_m31(note_0));
+    println!("  Note {}: 3000 units (cm: {})", idx_1, fmt_hashout_m31(note_1));
 
     // --- Step 4: Payment (CIRCUIT 2) - Alice sends 8000 to Bob ---
     println!("\nStep 4: Payment circuit (7000 + 3000 -> 8000 to Bob + 2000 change)");
-    let bob_owner = 99999u32;
+    let bob_sk = 99999u32;
+    let bob_owner_hash =
+        poseidon2::hashout_to_u32_array(poseidon2::derive_owner(M31::from(bob_sk)));
     let witness_1 = build_payment_witness(
         &ledger,
         epoch,
@@ -234,11 +255,11 @@ fn main() {
         3000,
         222,
         8000,
-        bob_owner,
+        bob_owner_hash,
         333,
         2000,
         444,
-        issuer_id.0,
+        issuer_key,
         cred_expiry,
         cred_secret,
         0,
@@ -254,17 +275,19 @@ fn main() {
     println!("done ({} ms)", start.elapsed().as_millis());
 
     println!("  Public outputs:");
-    println!("    Nullifier 0: {}", result_1.public_data.null_0);
-    println!("    Nullifier 1: {}", result_1.public_data.null_1);
-    println!("    Output cm 0 (Bob): {}", result_1.public_data.out_cm_0);
-    println!("    Output cm 1 (change): {}", result_1.public_data.out_cm_1);
-    println!("    Credential nullifier: {}", result_1.public_data.cred_null);
+    println!("    Nullifier 0: {}", fmt_hashout(&result_1.public_data.null_0));
+    println!("    Nullifier 1: {}", fmt_hashout(&result_1.public_data.null_1));
+    println!("    Output cm 0 (Bob): {}", fmt_hashout(&result_1.public_data.out_cm_0));
+    println!("    Output cm 1 (change): {}", fmt_hashout(&result_1.public_data.out_cm_1));
+    println!("    Credential nullifier: {}", fmt_hashout(&result_1.public_data.cred_null));
 
     ledger.apply_payment(&result_1.public_data).expect("Ledger rejected payment");
 
     // Insert output commitments as new notes
-    let change_idx = ledger.add_note(M31::from(result_1.public_data.out_cm_1));
-    let bob_note_idx = ledger.add_note(M31::from(result_1.public_data.out_cm_0));
+    let change_idx =
+        ledger.add_note(poseidon2::u32_array_to_hashout(result_1.public_data.out_cm_1));
+    let bob_note_idx =
+        ledger.add_note(poseidon2::u32_array_to_hashout(result_1.public_data.out_cm_0));
     println!(
         "  Ledger updated: {} nullifiers, notes at indices {}, {}",
         ledger.nullifier_set.len(),
@@ -273,7 +296,7 @@ fn main() {
     );
 
     // --- Step 5: Second payment (Alice spends her change) ---
-    // Alice's change note is at change_idx. She needs a second note — use a zero-value dummy.
+    // Alice's change note is at change_idx. She needs a second note -- use a zero-value dummy.
     println!("\nStep 5: Second payment (Alice spends 2000 change -> 1500 + 500)");
     let dummy_note = poseidon2::note_commitment_u64(asset, 0u64, alice_owner, M31::from(555u32));
     let dummy_idx = ledger.add_note(dummy_note);
@@ -294,11 +317,11 @@ fn main() {
         0,
         555,
         1500,
-        bob_owner,
+        bob_owner_hash,
         666,
         500,
         777,
-        issuer_id.0,
+        issuer_key,
         cred_expiry,
         cred_secret,
         0,
@@ -319,11 +342,7 @@ fn main() {
     println!("\nStep 6: Time-window audit circuit");
     println!("  Alice proves aggregate spend over epoch window without revealing individual txs");
 
-    let cred_path_vec = ledger.cred_tree.path(0);
-    let mut cred_path = [(0u32, 0u32); MERKLE_DEPTH];
-    for i in 0..MERKLE_DEPTH {
-        cred_path[i] = (cred_path_vec[i].0 .0, cred_path_vec[i].1);
-    }
+    let cred_path = path_to_u32(&ledger.cred_tree.path(0));
 
     let mut amounts = [0u32; 16];
     let mut timestamps = [0u32; 16];
@@ -337,13 +356,13 @@ fn main() {
         window_start: 999,
         window_end: 1002,
         claimed_total,
-        cred_root: ledger.cred_tree.root().0,
+        cred_root: ledger.cred_root_u32(),
         epoch: epoch_2,
         tx_amounts: amounts,
         tx_timestamps: timestamps,
         tx_count: 2,
         sk: alice_sk,
-        cred_issuer: issuer_id.0,
+        cred_issuer: issuer_key,
         cred_expiry,
         cred_secret,
         cred_path,

@@ -41,13 +41,13 @@ pub fn validate_payment_bundle(
     circuit::verify_payment(&bundle.payment)?;
     if bundle.payment.public_data.tx_binding_hash != tx.tx_binding_hash {
         return Err(format!(
-            "payment proof tx_binding_hash mismatch: proof {}, tx {}",
+            "payment proof tx_binding_hash mismatch: proof {:?}, tx {:?}",
             bundle.payment.public_data.tx_binding_hash, tx.tx_binding_hash
         ));
     }
     if bundle.payment.public_data.sender_binding_tag != tx.attachment.sender_binding_tag {
         return Err(format!(
-            "payment proof sender_binding_tag mismatch: proof {}, tx {}",
+            "payment proof sender_binding_tag mismatch: proof {:?}, tx {:?}",
             bundle.payment.public_data.sender_binding_tag, tx.attachment.sender_binding_tag
         ));
     }
@@ -64,13 +64,13 @@ pub fn validate_payment_bundle(
             fee_sidecar::verify_hush_fee(sidecar)?;
             if sidecar.public_data.tx_binding_hash != tx.tx_binding_hash {
                 return Err(format!(
-                    "sidecar tx_binding_hash mismatch: proof {}, tx {}",
+                    "sidecar tx_binding_hash mismatch: proof {:?}, tx {:?}",
                     sidecar.public_data.tx_binding_hash, tx.tx_binding_hash
                 ));
             }
             if sidecar.public_data.sender_binding_tag != tx.attachment.sender_binding_tag {
                 return Err(format!(
-                    "sidecar sender_binding_tag mismatch: proof {}, tx {}",
+                    "sidecar sender_binding_tag mismatch: proof {:?}, tx {:?}",
                     sidecar.public_data.sender_binding_tag, tx.attachment.sender_binding_tag
                 ));
             }
@@ -238,7 +238,7 @@ mod tests {
     fn test_wrong_tx_binding_hash_rejected() {
         let fixture = valid_usdc_hush_fee_fixture();
         let mut tx = fixture.tx.clone();
-        tx.tx_binding_hash = tx.tx_binding_hash.wrapping_add(1);
+        tx.tx_binding_hash[0] = tx.tx_binding_hash[0].wrapping_add(1);
         let err =
             match prove_payment_bundle(&tx, &fixture.witness, fixture.fee_sidecar_witness.as_ref())
             {
@@ -252,7 +252,7 @@ mod tests {
     fn test_wrong_sender_binding_tag_rejected() {
         let fixture = valid_usdc_hush_fee_fixture();
         let mut tx = fixture.tx.clone();
-        tx.attachment.sender_binding_tag = tx.attachment.sender_binding_tag.wrapping_add(1);
+        tx.attachment.sender_binding_tag[0] = tx.attachment.sender_binding_tag[0].wrapping_add(1);
         let err =
             match prove_payment_bundle(&tx, &fixture.witness, fixture.fee_sidecar_witness.as_ref())
             {

@@ -103,7 +103,7 @@ pub fn accepted_payment_record(
 ) -> Result<AcceptedTxRecord, String> {
     validate_payment_bundle(tx, bundle)?;
     Ok(AcceptedTxRecord {
-        tx_id: u64::from(tx.tx_binding_hash),
+        tx_id: tx.tx_binding_hash[0] as u64 | ((tx.tx_binding_hash[1] as u64) << 31),
         tx_kind: tx.descriptor.tx_kind,
         fee_asset: tx.descriptor.fee_asset,
         fee_amount: tx.descriptor.fee_amount,
@@ -675,7 +675,7 @@ mod tests {
         let bundle = payment_validation::prove_payment_bundle(&fixture.tx, &fixture.witness, None)
             .expect("Mode A bundle should prove");
         let mut bad_tx = fixture.tx.clone();
-        bad_tx.tx_binding_hash = bad_tx.tx_binding_hash.wrapping_add(1);
+        bad_tx.tx_binding_hash[0] = bad_tx.tx_binding_hash[0].wrapping_add(1);
 
         let mut block = BlockAccountingBuilder::new(11, 1);
         assert!(block.record_payment_bundle(&bad_tx, &bundle).is_err());

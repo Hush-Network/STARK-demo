@@ -14,10 +14,11 @@ pub struct PaymentFixtureContext {
     pub tx: PaymentTxV1,
     pub witness: PaymentWitness,
     pub fee_sidecar_witness: Option<HushFeeWitness>,
-    pub sender_binding_tag: u32,
+    pub sender_binding_tag: [u32; 4],
 }
 
-type NoteMerkleContext = (u32, [(u32, u32); MERKLE_DEPTH], [(u32, u32); MERKLE_DEPTH]);
+type NoteMerkleContext =
+    ([u32; 4], [([u32; 4], u32); MERKLE_DEPTH], [([u32; 4], u32); MERKLE_DEPTH]);
 
 fn build_note_context(sk: u32, asset: AssetId, inputs: [NoteInput; 2]) -> NoteMerkleContext {
     let owner = poseidon2::derive_owner(M31::from(sk));
@@ -41,14 +42,16 @@ fn build_note_context(sk: u32, asset: AssetId, inputs: [NoteInput; 2]) -> NoteMe
 
     let note_path_0_vec = note_tree.path(0);
     let note_path_1_vec = note_tree.path(1);
-    let mut note_path_0 = [(0u32, 0u32); MERKLE_DEPTH];
-    let mut note_path_1 = [(0u32, 0u32); MERKLE_DEPTH];
+    let mut note_path_0 = [([0u32; 4], 0u32); MERKLE_DEPTH];
+    let mut note_path_1 = [([0u32; 4], 0u32); MERKLE_DEPTH];
     for i in 0..MERKLE_DEPTH {
-        note_path_0[i] = (note_path_0_vec[i].0 .0, note_path_0_vec[i].1);
-        note_path_1[i] = (note_path_1_vec[i].0 .0, note_path_1_vec[i].1);
+        note_path_0[i] =
+            (poseidon2::hashout_to_u32_array(note_path_0_vec[i].0), note_path_0_vec[i].1);
+        note_path_1[i] =
+            (poseidon2::hashout_to_u32_array(note_path_1_vec[i].0), note_path_1_vec[i].1);
     }
 
-    (note_tree.root().0, note_path_0, note_path_1)
+    (poseidon2::hashout_to_u32_array(note_tree.root()), note_path_0, note_path_1)
 }
 
 pub fn build_payment_merkle_context(
@@ -63,8 +66,9 @@ pub fn build_payment_merkle_context(
     let (note_root, note_path_0, note_path_1) =
         build_note_context(sk, payment_asset, payment_inputs);
     let owner = poseidon2::derive_owner(M31::from(sk));
+    let issuer_id = poseidon2::derive_issuer_id(M31::from(cred_issuer));
     let cred_cm = poseidon2::credential_commitment(
-        M31::from(cred_issuer),
+        issuer_id,
         owner,
         M31::from(cred_expiry),
         M31::from(cred_secret),
@@ -72,15 +76,15 @@ pub fn build_payment_merkle_context(
     let mut cred_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
     cred_tree.set_leaf(0, cred_cm);
     let cred_path_vec = cred_tree.path(0);
-    let mut cred_path = [(0u32, 0u32); MERKLE_DEPTH];
+    let mut cred_path = [([0u32; 4], 0u32); MERKLE_DEPTH];
     for i in 0..MERKLE_DEPTH {
-        cred_path[i] = (cred_path_vec[i].0 .0, cred_path_vec[i].1);
+        cred_path[i] = (poseidon2::hashout_to_u32_array(cred_path_vec[i].0), cred_path_vec[i].1);
     }
 
     PaymentMerkleContext {
         epoch,
         note_root,
-        cred_root: cred_tree.root().0,
+        cred_root: poseidon2::hashout_to_u32_array(cred_tree.root()),
         cred_issuer,
         cred_expiry,
         cred_secret,
@@ -111,13 +115,16 @@ fn build_context(
     cred_secret: u32,
     epoch: u32,
 ) -> PaymentFixtureContext {
+    // Derive the recipient's owner hash from the fixture scalar
+    let recipient_owner_hash =
+        poseidon2::hashout_to_u32_array(poseidon2::derive_owner(M31::from(recipient_owner)));
     let tx = match route {
         PaymentRoute::SameAsset => PaymentTxV1::build_same_asset(
             payment_asset,
             payment_inputs.clone(),
             RecipientIntent {
                 amount: recipient_amount,
-                owner: recipient_owner,
+                owner: recipient_owner_hash,
                 randomness: recipient_randomness,
             },
             sender_change_randomness,
@@ -128,7 +135,7 @@ fn build_context(
             payment_inputs.clone(),
             RecipientIntent {
                 amount: recipient_amount,
-                owner: recipient_owner,
+                owner: recipient_owner_hash,
                 randomness: recipient_randomness,
             },
             sender_change_randomness,
@@ -168,10 +175,10 @@ fn build_context(
     };
 
     PaymentFixtureContext {
+        sender_binding_tag: tx.attachment.sender_binding_tag,
         tx: tx.clone(),
         witness,
         fee_sidecar_witness,
-        sender_binding_tag: tx.attachment.sender_binding_tag,
     }
 }
 
@@ -277,37 +284,33 @@ pub fn missing_sidecar_hush_fee_fixture() -> PaymentFixtureContext {
 
 pub fn malformed_sidecar_hush_fee_fixture() -> PaymentFixtureContext {
     let mut fixture = valid_usdc_hush_fee_fixture();
-    let bad_root = fixture
-        .fee_sidecar_witness
-        .as_ref()
-        .expect("valid Mode B fixture should include sidecar")
-        .note_root
-        .wrapping_add(1);
-    fixture
-        .fee_sidecar_witness
-        .as_mut()
-        .expect("valid Mode B fixture should include sidecar")
-        .note_root = bad_root;
+    let sidecar =
+        fixture.fee_sidecar_witness.as_mut().expect("valid Mode B fixture should include sidecar");
+    sidecar.note_root[0] = sidecar.note_root[0].wrapping_add(1);
     fixture
 }
 
 pub fn wrong_sender_binding_tag_hush_fee_fixture() -> PaymentFixtureContext {
     let mut fixture = valid_usdc_hush_fee_fixture();
+    let mut bad_tag = fixture.sender_binding_tag;
+    bad_tag[0] = bad_tag[0].wrapping_add(1);
     fixture
         .fee_sidecar_witness
         .as_mut()
         .expect("valid Mode B fixture should include sidecar")
-        .sender_binding_tag = fixture.sender_binding_tag.wrapping_add(1);
+        .sender_binding_tag = bad_tag;
     fixture
 }
 
 pub fn wrong_tx_binding_hash_hush_fee_fixture() -> PaymentFixtureContext {
     let mut fixture = valid_usdc_hush_fee_fixture();
+    let mut bad_hash = fixture.tx.tx_binding_hash;
+    bad_hash[0] = bad_hash[0].wrapping_add(1);
     fixture
         .fee_sidecar_witness
         .as_mut()
         .expect("valid Mode B fixture should include sidecar")
-        .tx_binding_hash = fixture.tx.tx_binding_hash.wrapping_add(1);
+        .tx_binding_hash = bad_hash;
     fixture
 }
 

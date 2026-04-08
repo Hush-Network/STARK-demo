@@ -42,6 +42,29 @@ function esc(s) {
 
 const ASSET_NAMES = { 1: 'USDC', 2: 'USDT', 3: 'HUSH' };
 
+// Format a [u32; 4] array as a 0x-prefixed 32-char hex string (4 x 8 hex digits).
+function fmtHash4(arr) {
+  if (!Array.isArray(arr) || arr.length !== 4) return '0x' + String(arr);
+  return '0x' + arr.map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
+}
+
+/**
+ * Parse a 32-char hex string (128-bit hash) into a Uint32Array of 4 u32 values.
+ * Handles optional "0x" prefix. Returns a zero-filled array for missing or
+ * malformed input so verification can still proceed (and fail cleanly in WASM).
+ */
+function hexToU32Array(hex) {
+  if (hex == null) return new Uint32Array(4);
+  const h = typeof hex === 'string' ? hex.replace(/^0x/i, '') : '';
+  if (h.length !== 32) return new Uint32Array(4);
+  return new Uint32Array([
+    parseInt(h.slice(0, 8), 16),
+    parseInt(h.slice(8, 16), 16),
+    parseInt(h.slice(16, 24), 16),
+    parseInt(h.slice(24, 32), 16),
+  ]);
+}
+
 function fmtBoundAmount(protocolUnits, scale) {
   if (!scale || scale <= 0) return esc(String(protocolUnits)) + ' protocol units';
   return '$' + (protocolUnits / scale).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
@@ -78,10 +101,17 @@ async function verify() {
       const result = JSON.parse(recompute_tx_binding_hash_json(JSON.stringify(receipt.binding)));
       if (result.error) {
         bindingError = result.error;
-      } else if (result.hash !== receipt.proof.tx_binding_hash) {
-        bindingError = `Binding hash mismatch: computed ${result.hash}, receipt claims ${receipt.proof.tx_binding_hash}`;
       } else {
-        bindingVerified = true;
+        // result.hash is [u32; 4] from WASM; receipt.proof.tx_binding_hash is a hex string.
+        // Normalize both to lowercase hex without 0x prefix for comparison.
+        const computedHex = (Array.isArray(result.hash) ? fmtHash4(result.hash) : String(result.hash))
+          .replace(/^0x/i, '').toLowerCase();
+        const claimedHex = String(receipt.proof.tx_binding_hash || '').replace(/^0x/i, '').toLowerCase();
+        if (computedHex !== claimedHex) {
+          bindingError = `Binding hash mismatch: computed 0x${computedHex}, receipt claims ${receipt.proof.tx_binding_hash}`;
+        } else {
+          bindingVerified = true;
+        }
       }
     } catch (e) {
       bindingError = 'Binding recomputation error: ' + e.message;
@@ -102,21 +132,23 @@ async function verify() {
   const hasProofBytes = !!receipt.proof.proof_bytes;
   if (hasProofBytes && wasmReady) {
     try {
-      const null_0 = parseInt(receipt.proof.null_0, 16);
-      const null_1 = parseInt(receipt.proof.null_1, 16);
-      const out_cm_0 = parseInt(receipt.proof.out_cm_0, 16);
-      const out_cm_1 = parseInt(receipt.proof.out_cm_1, 16);
-      const cred_null = parseInt(receipt.proof.cred_null, 16);
-      const note_root = receipt.proof.note_root || 0;
-      const cred_root = receipt.proof.cred_root || 0;
+      const null_0 = hexToU32Array(receipt.proof.null_0);
+      const null_1 = hexToU32Array(receipt.proof.null_1);
+      const out_cm_0 = hexToU32Array(receipt.proof.out_cm_0);
+      const out_cm_1 = hexToU32Array(receipt.proof.out_cm_1);
+      const cred_null = hexToU32Array(receipt.proof.cred_null);
+      const note_root = hexToU32Array(receipt.proof.note_root);
+      const cred_root = hexToU32Array(receipt.proof.cred_root);
       const epoch = receipt.proof.epoch || 0;
-      const tx_binding_hash = receipt.proof.tx_binding_hash || 0;
-      const sender_binding_tag = receipt.proof.sender_binding_tag || 0;
+      const tx_binding_hash = hexToU32Array(receipt.proof.tx_binding_hash);
+      const sender_binding_tag = hexToU32Array(receipt.proof.sender_binding_tag);
+      const logNumRows = receipt.proof.log_num_rows || 4; // default to LOG_N_LANES for old receipts
       const result = verify_serialized_proof(
         receipt.proof.proof_bytes,
         note_root, cred_root, epoch,
         null_0, null_1, out_cm_0, out_cm_1, cred_null,
-        tx_binding_hash, sender_binding_tag
+        tx_binding_hash, sender_binding_tag,
+        logNumRows
       );
       if (result === 'ok') {
         starkVerified = true;

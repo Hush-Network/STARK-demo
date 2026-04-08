@@ -86,16 +86,16 @@ pub struct WalletSubmissionRequest {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PaymentProofView {
-    pub null_0: u32,
-    pub null_1: u32,
-    pub out_cm_0: u32,
-    pub out_cm_1: u32,
-    pub cred_null: u32,
-    pub note_root: u32,
-    pub cred_root: u32,
+    pub null_0: [u32; 4],
+    pub null_1: [u32; 4],
+    pub out_cm_0: [u32; 4],
+    pub out_cm_1: [u32; 4],
+    pub cred_null: [u32; 4],
+    pub note_root: [u32; 4],
+    pub cred_root: [u32; 4],
     pub epoch: u32,
-    pub tx_binding_hash: u32,
-    pub sender_binding_tag: u32,
+    pub tx_binding_hash: [u32; 4],
+    pub sender_binding_tag: [u32; 4],
     pub prove_time_ms: f64,
     pub verify_time_ms: f64,
     pub proof_bytes: String,
@@ -103,13 +103,13 @@ pub struct PaymentProofView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HushSidecarProofView {
-    pub note_root: u32,
-    pub tx_binding_hash: u32,
-    pub sender_binding_tag: u32,
+    pub note_root: [u32; 4],
+    pub tx_binding_hash: [u32; 4],
+    pub sender_binding_tag: [u32; 4],
     pub fee_amount: u64,
-    pub null_0: u32,
-    pub null_1: u32,
-    pub change_cm: u32,
+    pub null_0: [u32; 4],
+    pub null_1: [u32; 4],
+    pub change_cm: [u32; 4],
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -329,13 +329,16 @@ fn prepare_wallet_submission(
         request.recipient_owner.wrapping_mul(31).wrapping_add(request.amount as u32);
     let sender_change_randomness =
         (request.payment_balance as u32).wrapping_mul(17).wrapping_add(444);
+    let recipient_owner_hash = crate::poseidon2::hashout_to_u32_array(
+        crate::poseidon2::derive_owner(stwo::core::fields::m31::M31::from(request.recipient_owner)),
+    );
     let tx = match route {
         PaymentRoute::SameAsset => PaymentTxV1::build_same_asset(
             payment_asset,
             payment_inputs.clone(),
             RecipientIntent {
                 amount: request.amount,
-                owner: request.recipient_owner,
+                owner: recipient_owner_hash,
                 randomness: recipient_randomness,
             },
             sender_change_randomness,
@@ -346,7 +349,7 @@ fn prepare_wallet_submission(
             payment_inputs.clone(),
             RecipientIntent {
                 amount: request.amount,
-                owner: request.recipient_owner,
+                owner: recipient_owner_hash,
                 randomness: recipient_randomness,
             },
             sender_change_randomness,
@@ -552,7 +555,9 @@ mod tests {
             split_demo_notes(request.payment_balance, 111, 222).expect("split"),
             RecipientIntent {
                 amount: request.amount,
-                owner: request.recipient_owner,
+                owner: crate::poseidon2::hashout_to_u32_array(crate::poseidon2::derive_owner(
+                    stwo::core::fields::m31::M31::from(request.recipient_owner),
+                )),
                 randomness: request
                     .recipient_owner
                     .wrapping_mul(31)
@@ -584,7 +589,9 @@ mod tests {
             split_demo_notes(request.payment_balance, 111, 222).expect("split"),
             RecipientIntent {
                 amount: request.amount,
-                owner: request.recipient_owner,
+                owner: crate::poseidon2::hashout_to_u32_array(crate::poseidon2::derive_owner(
+                    stwo::core::fields::m31::M31::from(request.recipient_owner),
+                )),
                 randomness: request
                     .recipient_owner
                     .wrapping_mul(31)

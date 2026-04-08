@@ -23,6 +23,12 @@ function esc(s) {
     .replace(/'/g, '&#39;');
 }
 
+// Format a [u32; 4] array as a 0x-prefixed 32-char hex string (4 x 8 hex digits).
+function fmtHash4(arr) {
+  if (!Array.isArray(arr) || arr.length !== 4) return '0x' + String(arr);
+  return '0x' + arr.map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
+}
+
 const DEFAULT_SETUP_METHOD = 'Device key';
 const DEFAULT_RECIPIENT = 'Meridian Labs';
 const DEFAULT_AMOUNT = '125,000.00';
@@ -815,16 +821,16 @@ async function sendPayment() {
     };
 
     state.proofOutputs = [
-      { label: 'null_0', value: `0x${paymentProof.null_0.toString(16).padStart(8, '0')}`, note: 'First consumed payment note.' },
-      { label: 'null_1', value: `0x${paymentProof.null_1.toString(16).padStart(8, '0')}`, note: 'Second consumed payment note.' },
-      { label: 'out_cm_0', value: `0x${paymentProof.out_cm_0.toString(16).padStart(8, '0')}`, note: 'Committed note for the recipient.' },
-      { label: 'out_cm_1', value: `0x${paymentProof.out_cm_1.toString(16).padStart(8, '0')}`, note: 'Committed sender payment-asset change note.' },
-      { label: 'cred_null', value: `0x${paymentProof.cred_null.toString(16).padStart(8, '0')}`, note: 'Credential nullifier for this payment.' },
+      { label: 'null_0', value: fmtHash4(paymentProof.null_0), note: 'First consumed payment note.' },
+      { label: 'null_1', value: fmtHash4(paymentProof.null_1), note: 'Second consumed payment note.' },
+      { label: 'out_cm_0', value: fmtHash4(paymentProof.out_cm_0), note: 'Committed note for the recipient.' },
+      { label: 'out_cm_1', value: fmtHash4(paymentProof.out_cm_1), note: 'Committed sender payment-asset change note.' },
+      { label: 'cred_null', value: fmtHash4(paymentProof.cred_null), note: 'Credential nullifier for this payment.' },
     ];
     if (result.hush_sidecar) {
       state.proofOutputs.push({
         label: 'hush_change_cm',
-        value: `0x${result.hush_sidecar.change_cm.toString(16).padStart(8, '0')}`,
+        value: fmtHash4(result.hush_sidecar.change_cm),
         note: 'Committed sender HUSH change note from the fee sidecar.',
       });
     }
@@ -855,19 +861,20 @@ async function sendPayment() {
         asset: state.activeAsset,
         amount,
         proof: {
-          null_0: `0x${paymentProof.null_0.toString(16)}`,
-          null_1: `0x${paymentProof.null_1.toString(16)}`,
-          out_cm_0: `0x${paymentProof.out_cm_0.toString(16)}`,
-          out_cm_1: `0x${paymentProof.out_cm_1.toString(16)}`,
-          cred_null: `0x${paymentProof.cred_null.toString(16)}`,
+          null_0: fmtHash4(paymentProof.null_0),
+          null_1: fmtHash4(paymentProof.null_1),
+          out_cm_0: fmtHash4(paymentProof.out_cm_0),
+          out_cm_1: fmtHash4(paymentProof.out_cm_1),
+          cred_null: fmtHash4(paymentProof.cred_null),
           prove_ms: Math.round(paymentProof.prove_time_ms),
           verify_ms: Math.round(paymentProof.verify_time_ms),
           proof_bytes: paymentProof.proof_bytes,
-          note_root: paymentProof.note_root,
-          cred_root: paymentProof.cred_root,
+          note_root: fmtHash4(paymentProof.note_root),
+          cred_root: fmtHash4(paymentProof.cred_root),
           epoch: paymentProof.epoch,
-          tx_binding_hash: paymentProof.tx_binding_hash,
-          sender_binding_tag: paymentProof.sender_binding_tag,
+          tx_binding_hash: fmtHash4(paymentProof.tx_binding_hash),
+          sender_binding_tag: fmtHash4(paymentProof.sender_binding_tag),
+          log_num_rows: paymentProof.log_num_rows,
         },
         binding: {
           replay_domain: result.tx.descriptor.replay_domain,

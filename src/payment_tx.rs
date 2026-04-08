@@ -108,7 +108,7 @@ pub struct NoteInput {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecipientIntent {
     pub amount: u64,
-    pub owner: u32,
+    pub owner: [u32; 4],
     pub randomness: u32,
 }
 
@@ -125,7 +125,7 @@ pub struct FeeAuxProofDescriptor {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaymentExecutionAttachment {
-    pub sender_binding_tag: u32,
+    pub sender_binding_tag: [u32; 4],
     pub fee_aux: Option<FeeAuxProofDescriptor>,
 }
 
@@ -136,28 +136,28 @@ pub struct PaymentTxV1 {
     pub inputs: [NoteInput; 2],
     pub recipient: RecipientIntent,
     pub sender_change: SenderChangeIntent,
-    pub tx_binding_hash: u32,
+    pub tx_binding_hash: [u32; 4],
     pub attachment: PaymentExecutionAttachment,
 }
 
 #[derive(Clone, Debug)]
 pub struct PaymentMerkleContext {
     pub epoch: u32,
-    pub note_root: u32,
-    pub cred_root: u32,
+    pub note_root: [u32; 4],
+    pub cred_root: [u32; 4],
     pub cred_issuer: u32,
     pub cred_expiry: u32,
     pub cred_secret: u32,
-    pub note_path_0: [(u32, u32); MERKLE_DEPTH],
-    pub note_path_1: [(u32, u32); MERKLE_DEPTH],
-    pub cred_path: [(u32, u32); MERKLE_DEPTH],
+    pub note_path_0: [([u32; 4], u32); MERKLE_DEPTH],
+    pub note_path_1: [([u32; 4], u32); MERKLE_DEPTH],
+    pub cred_path: [([u32; 4], u32); MERKLE_DEPTH],
 }
 
 #[derive(Clone, Debug)]
 pub struct HushFeeMerkleContext {
-    pub note_root: u32,
-    pub note_path_0: [(u32, u32); MERKLE_DEPTH],
-    pub note_path_1: [(u32, u32); MERKLE_DEPTH],
+    pub note_root: [u32; 4],
+    pub note_path_0: [([u32; 4], u32); MERKLE_DEPTH],
+    pub note_path_1: [([u32; 4], u32); MERKLE_DEPTH],
 }
 
 impl PaymentTxV1 {
@@ -244,9 +244,9 @@ impl PaymentTxV1 {
             inputs,
             recipient,
             sender_change,
-            tx_binding_hash: 0,
+            tx_binding_hash: [0; 4],
             attachment: PaymentExecutionAttachment {
-                sender_binding_tag: 0,
+                sender_binding_tag: [0; 4],
                 fee_aux: route
                     .requires_hush_sidecar()
                     .then_some(FeeAuxProofDescriptor { route: FEE_AUX_ROUTE_HUSH_SIDECAR }),
@@ -277,7 +277,7 @@ impl PaymentTxV1 {
         let expected_sender_binding_tag = derive_sender_binding_tag(sk, self.tx_binding_hash);
         if self.attachment.sender_binding_tag != expected_sender_binding_tag {
             return Err(format!(
-                "sender_binding_tag mismatch: tx {}, expected {}",
+                "sender_binding_tag mismatch: tx {:?}, expected {:?}",
                 self.attachment.sender_binding_tag, expected_sender_binding_tag
             ));
         }
@@ -330,7 +330,7 @@ impl PaymentTxV1 {
         let expected_sender_binding_tag = derive_sender_binding_tag(sk, self.tx_binding_hash);
         if self.attachment.sender_binding_tag != expected_sender_binding_tag {
             return Err(format!(
-                "sender_binding_tag mismatch: tx {}, expected {}",
+                "sender_binding_tag mismatch: tx {:?}, expected {:?}",
                 self.attachment.sender_binding_tag, expected_sender_binding_tag
             ));
         }
@@ -430,7 +430,7 @@ pub fn expected_fee_amount(payment_asset: u32, fee_asset: u32) -> Result<u64, St
     Ok(PAYMENT_STANDARD_FEE_AMOUNT)
 }
 
-pub fn compute_tx_binding_hash(tx: &PaymentTxV1) -> u32 {
+pub fn compute_tx_binding_hash(tx: &PaymentTxV1) -> [u32; 4] {
     compute_mode_a_tx_binding_hash(
         tx.descriptor.replay_domain,
         tx.descriptor.payment_asset,
@@ -462,14 +462,15 @@ pub fn compute_mode_a_tx_binding_hash(
     fee_amount: u64,
     fee_schedule_version: u32,
     recipient_amount: u64,
-    recipient_owner: u32,
+    recipient_owner: [u32; 4],
     recipient_randomness: u32,
     sender_change_amount: u64,
     sender_change_randomness: u32,
-) -> u32 {
+) -> [u32; 4] {
     let (fee_lo, fee_hi) = amount_to_m31_pair(fee_amount);
     let (recip_lo, recip_hi) = amount_to_m31_pair(recipient_amount);
     let (change_lo, change_hi) = amount_to_m31_pair(sender_change_amount);
+    let owner = poseidon2::u32_array_to_hashout(recipient_owner);
 
     let chunk_0 = poseidon2::domain_hash4(
         M31::from(replay_domain),
@@ -485,10 +486,13 @@ pub fn compute_mode_a_tx_binding_hash(
         M31::from(fee_schedule_version),
         poseidon2::DOMAIN_TX_BINDING,
     );
-    let chunk_2 = poseidon2::domain_hash4(
+    let chunk_2 = poseidon2::domain_hash7(
         recip_lo,
         recip_hi,
-        M31::from(recipient_owner),
+        owner[0],
+        owner[1],
+        owner[2],
+        owner[3],
         M31::from(recipient_randomness),
         poseidon2::DOMAIN_TX_BINDING,
     );
@@ -499,18 +503,19 @@ pub fn compute_mode_a_tx_binding_hash(
         M31::from(0u32),
         poseidon2::DOMAIN_TX_BINDING,
     );
-    let left = poseidon2::domain_hash2(chunk_0, chunk_1, poseidon2::DOMAIN_TX_BINDING);
-    let mid = poseidon2::domain_hash2(left, chunk_2, poseidon2::DOMAIN_TX_BINDING);
-    poseidon2::domain_hash2(mid, chunk_3, poseidon2::DOMAIN_TX_BINDING).0
+    let left = poseidon2::hash_pair(chunk_0, chunk_1, poseidon2::DOMAIN_TX_BINDING);
+    let mid = poseidon2::hash_pair(left, chunk_2, poseidon2::DOMAIN_TX_BINDING);
+    let result = poseidon2::hash_pair(mid, chunk_3, poseidon2::DOMAIN_TX_BINDING);
+    poseidon2::hashout_to_u32_array(result)
 }
 
-pub fn derive_sender_binding_tag(sk: u32, tx_binding_hash: u32) -> u32 {
-    poseidon2::domain_hash2(
-        M31::from(sk),
-        M31::from(tx_binding_hash),
+pub fn derive_sender_binding_tag(sk: u32, tx_binding_hash: [u32; 4]) -> [u32; 4] {
+    let h = poseidon2::u32_array_to_hashout(tx_binding_hash);
+    let result = poseidon2::sponge_hash(
+        &[M31::from(sk), h[0], h[1], h[2], h[3]],
         poseidon2::DOMAIN_SENDER_BINDING,
-    )
-    .0
+    );
+    poseidon2::hashout_to_u32_array(result)
 }
 
 pub fn validate_payment_tx(tx: &PaymentTxV1) -> Result<PaymentRoute, String> {
@@ -577,7 +582,7 @@ pub fn validate_payment_tx(tx: &PaymentTxV1) -> Result<PaymentRoute, String> {
     let expected_binding_hash = compute_tx_binding_hash(tx);
     if tx.tx_binding_hash != expected_binding_hash {
         return Err(format!(
-            "tx_binding_hash mismatch: got {}, expected {}",
+            "tx_binding_hash mismatch: got {:?}, expected {:?}",
             tx.tx_binding_hash, expected_binding_hash
         ));
     }
@@ -596,7 +601,7 @@ mod tests {
                 NoteInput { amount: 7_000, randomness: 111 },
                 NoteInput { amount: 3_000, randomness: 222 },
             ],
-            RecipientIntent { amount: 8_000, owner: 99_999, randomness: 333 },
+            RecipientIntent { amount: 8_000, owner: [99_999, 0, 0, 0], randomness: 333 },
             444,
             12_345,
         )
@@ -610,7 +615,7 @@ mod tests {
                 NoteInput { amount: 7_000, randomness: 111 },
                 NoteInput { amount: 3_000, randomness: 222 },
             ],
-            RecipientIntent { amount: 8_000, owner: 99_999, randomness: 333 },
+            RecipientIntent { amount: 8_000, owner: [99_999, 0, 0, 0], randomness: 333 },
             444,
             12_345,
         )
@@ -676,7 +681,7 @@ mod tests {
     #[test]
     fn test_wrong_binding_hash_rejected() {
         let mut tx = sample_hush_fee_tx(AssetId::Usdt);
-        tx.tx_binding_hash = tx.tx_binding_hash.wrapping_add(1);
+        tx.tx_binding_hash[0] = tx.tx_binding_hash[0].wrapping_add(1);
         assert!(validate_payment_tx(&tx).is_err());
     }
 

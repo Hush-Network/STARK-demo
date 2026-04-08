@@ -239,16 +239,16 @@ fn bench_credential_issuance() -> (f64, f64, f64) {
     let mut issuer_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
     issuer_tree.set_leaf(0, issuer_id);
     let path_vec = issuer_tree.path(0);
-    let mut issuer_path = [(0u32, 0u32); MERKLE_DEPTH];
+    let mut issuer_path = [([0u32; 4], 0u32); MERKLE_DEPTH];
     for i in 0..MERKLE_DEPTH {
-        issuer_path[i] = (path_vec[i].0 .0, path_vec[i].1);
+        issuer_path[i] = (poseidon2::hashout_to_u32_array(path_vec[i].0), path_vec[i].1);
     }
 
     let witness = credential_issuance::IssuanceWitness {
-        issuer_root: issuer_tree.root().0,
-        credential_commitment: cm.0,
+        issuer_root: poseidon2::hashout_to_u32_array(issuer_tree.root()),
+        credential_commitment: poseidon2::hashout_to_u32_array(cm),
         issuer_key: 42,
-        subject: subject.0,
+        subject: poseidon2::hashout_to_u32_array(subject),
         expiry: 2000,
         secret: 777,
         issuer_path,
@@ -266,19 +266,16 @@ fn bench_credential_issuance() -> (f64, f64, f64) {
 fn bench_time_window() -> (f64, f64, f64) {
     let sk = M31::from(12345u32);
     let owner = poseidon2::derive_owner(sk);
-    let cred_cm = poseidon2::credential_commitment(
-        M31::from(1u32),
-        owner,
-        M31::from(2000u32),
-        M31::from(777u32),
-    );
+    let issuer_id = poseidon2::derive_issuer_id(M31::from(1u32));
+    let cred_cm =
+        poseidon2::credential_commitment(issuer_id, owner, M31::from(2000u32), M31::from(777u32));
 
     let mut cred_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
     cred_tree.set_leaf(0, cred_cm);
     let path_vec = cred_tree.path(0);
-    let mut cred_path = [(0u32, 0u32); MERKLE_DEPTH];
+    let mut cred_path = [([0u32; 4], 0u32); MERKLE_DEPTH];
     for i in 0..MERKLE_DEPTH {
-        cred_path[i] = (path_vec[i].0 .0, path_vec[i].1);
+        cred_path[i] = (poseidon2::hashout_to_u32_array(path_vec[i].0), path_vec[i].1);
     }
 
     let mut amounts = [0u32; 16];
@@ -296,7 +293,7 @@ fn bench_time_window() -> (f64, f64, f64) {
         window_start: 50,
         window_end: 500,
         claimed_total: 110000,
-        cred_root: cred_tree.root().0,
+        cred_root: poseidon2::hashout_to_u32_array(cred_tree.root()),
         epoch: 1000,
         tx_amounts: amounts,
         tx_timestamps: timestamps,

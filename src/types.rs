@@ -36,8 +36,8 @@ pub fn limbs_to_amount(limbs: [u32; NUM_LIMBS]) -> u64 {
 #[derive(Clone, Debug)]
 pub struct PaymentWitness {
     pub epoch: u32,
-    pub note_root: u32,
-    pub cred_root: u32,
+    pub note_root: [u32; 4],
+    pub cred_root: [u32; 4],
     pub sk: u32,
     pub in_asset: u32,
     pub in_amt_0: u64,
@@ -45,7 +45,7 @@ pub struct PaymentWitness {
     pub in_amt_1: u64,
     pub in_rand_1: u32,
     pub out_amt_0: u64,
-    pub out_owner_0: u32,
+    pub out_owner_0: [u32; 4],
     pub out_rand_0: u32,
     pub out_amt_1: u64,
     pub out_rand_1: u32,
@@ -54,20 +54,20 @@ pub struct PaymentWitness {
     pub fee_amount: u64,
     pub fee_class: u32,
     pub replay_domain: u32,
-    pub tx_binding_hash: u32,
-    pub sender_binding_tag: u32,
+    pub tx_binding_hash: [u32; 4],
+    pub sender_binding_tag: [u32; 4],
     pub cred_issuer: u32,
     pub cred_expiry: u32,
     pub cred_secret: u32,
 
-    pub note_path_0: [(u32, u32); MERKLE_DEPTH],
-    pub note_path_1: [(u32, u32); MERKLE_DEPTH],
-    pub cred_path: [(u32, u32); MERKLE_DEPTH],
+    pub note_path_0: [([u32; 4], u32); MERKLE_DEPTH],
+    pub note_path_1: [([u32; 4], u32); MERKLE_DEPTH],
+    pub cred_path: [([u32; 4], u32); MERKLE_DEPTH],
 }
 
 #[derive(Clone, Debug)]
 pub struct HushFeeWitness {
-    pub note_root: u32,
+    pub note_root: [u32; 4],
     pub sk: u32,
     pub in_amt_0: u64,
     pub in_rand_0: u32,
@@ -76,10 +76,10 @@ pub struct HushFeeWitness {
     pub change_amt: u64,
     pub change_rand: u32,
     pub fee_amount: u64,
-    pub tx_binding_hash: u32,
-    pub sender_binding_tag: u32,
-    pub note_path_0: [(u32, u32); MERKLE_DEPTH],
-    pub note_path_1: [(u32, u32); MERKLE_DEPTH],
+    pub tx_binding_hash: [u32; 4],
+    pub sender_binding_tag: [u32; 4],
+    pub note_path_0: [([u32; 4], u32); MERKLE_DEPTH],
+    pub note_path_1: [([u32; 4], u32); MERKLE_DEPTH],
 }
 
 #[cfg(test)]

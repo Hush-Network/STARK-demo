@@ -1,6 +1,14 @@
 //! Poseidon2 (M31, width-16). Constants from Plonky3 Grain LFSR.
+//! Hash output is 4 × M31 (124-bit collision resistance).
 
 use stwo::core::fields::m31::M31;
+
+/// 4-element hash output: `[state[0], state[1], state[2], state[3]]` after permutation.
+/// Provides ~124 bits of collision resistance (4 × 31-bit field elements).
+pub type HashOut = [M31; 4];
+
+/// Zero hash output, used as the default/empty leaf in Merkle trees.
+pub const HASH_ZERO: HashOut = [M31(0), M31(0), M31(0), M31(0)];
 
 pub const WIDTH: usize = 16;
 pub const RATE: usize = 8;
@@ -170,31 +178,83 @@ pub fn permute_state(state: &mut [M31; WIDTH]) {
     }
 }
 
-fn hash2_with_domain(a: M31, b: M31, domain: u32) -> M31 {
-    let mut state = [M31::from(0u32); WIDTH];
-    state[0] = a;
-    state[1] = b;
-    state[RATE] = M31::from(domain);
-    permute_state(&mut state);
-    state[0]
+/// Extract 4-element hash output from permutation state.
+#[inline]
+fn squeeze(state: &[M31; WIDTH]) -> HashOut {
+    [state[0], state[1], state[2], state[3]]
 }
 
-fn hash_many_4_with_domain(a: M31, b: M31, c: M31, d: M31, domain: u32) -> M31 {
+/// Single-block hash: up to RATE inputs with domain separation. Returns 4×M31.
+fn hash_block(inputs: &[M31], domain: u32) -> HashOut {
+    debug_assert!(inputs.len() <= RATE);
     let mut state = [M31::from(0u32); WIDTH];
-    state[0] = a;
-    state[1] = b;
-    state[2] = c;
-    state[3] = d;
+    for (i, &val) in inputs.iter().enumerate() {
+        state[i] = val;
+    }
     state[RATE] = M31::from(domain);
     permute_state(&mut state);
-    state[0]
+    squeeze(&state)
 }
 
-pub fn domain_hash2(a: M31, b: M31, domain: u32) -> M31 {
+/// Multi-block sponge hash for arbitrary-length input with domain separation.
+/// For inputs <= RATE elements, equivalent to hash_block.
+/// For longer inputs, absorbs in RATE-sized chunks with standard sponge construction.
+pub fn sponge_hash(inputs: &[M31], domain: u32) -> HashOut {
+    if inputs.len() <= RATE {
+        return hash_block(inputs, domain);
+    }
+    let mut state = [M31::from(0u32); WIDTH];
+    state[RATE] = M31::from(domain);
+    for (block_idx, chunk) in inputs.chunks(RATE).enumerate() {
+        if block_idx == 0 {
+            for (i, &val) in chunk.iter().enumerate() {
+                state[i] = val;
+            }
+        } else {
+            for (i, &val) in chunk.iter().enumerate() {
+                state[i] += val;
+            }
+        }
+        permute_state(&mut state);
+    }
+    squeeze(&state)
+}
+
+/// Return intermediate states for each permutation block in a sponge hash.
+/// Used by AIR constraint generation (gen_trace) to produce the full trace.
+pub fn sponge_intermediates(inputs: &[M31], domain: u32) -> Vec<[M31; WIDTH]> {
+    let mut states = Vec::new();
+    let mut state = [M31::from(0u32); WIDTH];
+    state[RATE] = M31::from(domain);
+    for (block_idx, chunk) in inputs.chunks(RATE).enumerate() {
+        if block_idx == 0 {
+            for (i, &val) in chunk.iter().enumerate() {
+                state[i] = val;
+            }
+        } else {
+            for (i, &val) in chunk.iter().enumerate() {
+                state[i] += val;
+            }
+        }
+        states.push(state);
+        permute_state(&mut state);
+    }
+    states
+}
+
+fn hash2_with_domain(a: M31, b: M31, domain: u32) -> HashOut {
+    hash_block(&[a, b], domain)
+}
+
+fn hash_many_4_with_domain(a: M31, b: M31, c: M31, d: M31, domain: u32) -> HashOut {
+    hash_block(&[a, b, c, d], domain)
+}
+
+pub fn domain_hash2(a: M31, b: M31, domain: u32) -> HashOut {
     hash2_with_domain(a, b, domain)
 }
 
-pub fn domain_hash4(a: M31, b: M31, c: M31, d: M31, domain: u32) -> M31 {
+pub fn domain_hash4(a: M31, b: M31, c: M31, d: M31, domain: u32) -> HashOut {
     hash_many_4_with_domain(a, b, c, d, domain)
 }
 
@@ -207,52 +267,58 @@ fn hash_many_7_with_domain(
     f: M31,
     g: M31,
     domain: u32,
-) -> M31 {
-    let mut state = [M31::from(0u32); WIDTH];
-    state[0] = a;
-    state[1] = b;
-    state[2] = c;
-    state[3] = d;
-    state[4] = e;
-    state[5] = f;
-    state[6] = g;
-    state[RATE] = M31::from(domain);
-    permute_state(&mut state);
-    state[0]
+) -> HashOut {
+    hash_block(&[a, b, c, d, e, f, g], domain)
 }
 
-pub fn domain_hash7(a: M31, b: M31, c: M31, d: M31, e: M31, f: M31, g: M31, domain: u32) -> M31 {
+pub fn domain_hash7(
+    a: M31,
+    b: M31,
+    c: M31,
+    d: M31,
+    e: M31,
+    f: M31,
+    g: M31,
+    domain: u32,
+) -> HashOut {
     hash_many_7_with_domain(a, b, c, d, e, f, g, domain)
+}
+
+/// Hash two HashOut values (8 rate elements, single permutation).
+/// Used for Merkle tree nodes and merging intermediate hash outputs.
+pub fn hash_pair(a: HashOut, b: HashOut, domain: u32) -> HashOut {
+    hash_block(&[a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]], domain)
 }
 
 // Raw hash without domain separation, used in tests only.
 #[cfg(test)]
-pub(crate) fn hash2(a: M31, b: M31) -> M31 {
+pub(crate) fn hash2(a: M31, b: M31) -> HashOut {
     let mut state = [M31::from(0u32); WIDTH];
     state[0] = a;
     state[1] = b;
     permute_state(&mut state);
-    state[0]
+    squeeze(&state)
 }
 
 // Note commitment with 4-limb amount encoding.
-// Preimage: (asset, amount_L0, amount_L1, amount_L2, amount_L3, owner, randomness)
-// This uses 7 of the 8 rate elements in a single Poseidon2 permutation.
-// TODO(prod): commitments should output multiple field elements (QM31) for collision resistance
+// Preimage: (asset, a0, a1, a2, a3, owner[0..4], randomness) = 10 inputs → 2 sponge blocks.
 pub fn note_commitment(
     asset: M31,
     a0: M31,
     a1: M31,
     a2: M31,
     a3: M31,
-    owner: M31,
+    owner: HashOut,
     randomness: M31,
-) -> M31 {
-    hash_many_7_with_domain(asset, a0, a1, a2, a3, owner, randomness, DOMAIN_NOTE_CM)
+) -> HashOut {
+    sponge_hash(
+        &[asset, a0, a1, a2, a3, owner[0], owner[1], owner[2], owner[3], randomness],
+        DOMAIN_NOTE_CM,
+    )
 }
 
 /// Convenience wrapper: decompose a u64 amount into 4 limbs and compute note commitment.
-pub fn note_commitment_u64(asset: M31, amount: u64, owner: M31, randomness: M31) -> M31 {
+pub fn note_commitment_u64(asset: M31, amount: u64, owner: HashOut, randomness: M31) -> HashOut {
     let limbs = crate::types::amount_to_limbs(amount);
     note_commitment(
         asset,
@@ -265,34 +331,44 @@ pub fn note_commitment_u64(asset: M31, amount: u64, owner: M31, randomness: M31)
     )
 }
 
-pub fn credential_commitment(issuer: M31, owner: M31, expiry: M31, secret: M31) -> M31 {
-    hash_many_4_with_domain(issuer, owner, expiry, secret, DOMAIN_CRED_CM)
+/// Credential commitment. Preimage: (issuer[0..4], owner[0..4], expiry, secret) = 10 inputs → 2 sponge blocks.
+pub fn credential_commitment(issuer: HashOut, owner: HashOut, expiry: M31, secret: M31) -> HashOut {
+    sponge_hash(
+        &[
+            issuer[0], issuer[1], issuer[2], issuer[3], owner[0], owner[1], owner[2], owner[3],
+            expiry, secret,
+        ],
+        DOMAIN_CRED_CM,
+    )
 }
 
-pub fn nullifier(sk: M31, commitment: M31) -> M31 {
-    hash2_with_domain(sk, commitment, DOMAIN_NULLIFIER)
+/// Note nullifier. Preimage: (sk, commitment[0..4]) = 5 inputs → single block.
+pub fn nullifier(sk: M31, commitment: HashOut) -> HashOut {
+    hash_block(&[sk, commitment[0], commitment[1], commitment[2], commitment[3]], DOMAIN_NULLIFIER)
 }
 
-pub fn credential_nullifier(secret: M31, cred_cm: M31, epoch: M31) -> M31 {
-    hash_many_4_with_domain(secret, cred_cm, epoch, M31::from(0u32), DOMAIN_CRED_NULL)
+/// Credential nullifier. Preimage: (secret, cred_cm[0..4], epoch) = 6 inputs → single block.
+pub fn credential_nullifier(secret: M31, cred_cm: HashOut, epoch: M31) -> HashOut {
+    hash_block(&[secret, cred_cm[0], cred_cm[1], cred_cm[2], cred_cm[3], epoch], DOMAIN_CRED_NULL)
 }
 
-pub fn derive_owner(sk: M31) -> M31 {
+pub fn derive_owner(sk: M31) -> HashOut {
     hash2_with_domain(sk, M31::from(0u32), DOMAIN_OWNER)
 }
 
-pub fn derive_issuer_id(issuer_key: M31) -> M31 {
+pub fn derive_issuer_id(issuer_key: M31) -> HashOut {
     hash2_with_domain(issuer_key, M31::from(0u32), DOMAIN_ISSUER_ID)
 }
 
-pub fn merkle_hash(left: M31, right: M31) -> M31 {
-    hash2_with_domain(left, right, DOMAIN_MERKLE)
+/// Merkle tree node hash. Takes two HashOut children (8 rate elements, single block).
+pub fn merkle_hash(left: HashOut, right: HashOut) -> HashOut {
+    hash_pair(left, right, DOMAIN_MERKLE)
 }
 
-pub fn build_merkle_tree(leaves: &[M31]) -> Vec<M31> {
+pub fn build_merkle_tree(leaves: &[HashOut]) -> Vec<HashOut> {
     let n = leaves.len();
     assert!(n.is_power_of_two() && n >= 2);
-    let mut tree = vec![M31::from(0u32); 2 * n];
+    let mut tree = vec![HASH_ZERO; 2 * n];
     tree[n..].copy_from_slice(leaves);
     for i in (1..n).rev() {
         tree[i] = merkle_hash(tree[2 * i], tree[2 * i + 1]);
@@ -300,11 +376,11 @@ pub fn build_merkle_tree(leaves: &[M31]) -> Vec<M31> {
     tree
 }
 
-pub fn merkle_root(leaves: &[M31]) -> M31 {
+pub fn merkle_root(leaves: &[HashOut]) -> HashOut {
     build_merkle_tree(leaves)[1]
 }
 
-pub fn merkle_path(tree: &[M31], leaf_index: usize) -> Vec<(M31, u32)> {
+pub fn merkle_path(tree: &[HashOut], leaf_index: usize) -> Vec<(HashOut, u32)> {
     let n = tree.len() / 2;
     let mut path = Vec::new();
     let mut idx = n + leaf_index;
@@ -322,20 +398,20 @@ use std::collections::HashMap;
 
 pub struct SparseMerkleTree {
     depth: usize,
-    nodes: HashMap<usize, M31>,
-    default_hashes: Vec<M31>,
+    nodes: HashMap<usize, HashOut>,
+    default_hashes: Vec<HashOut>,
 }
 
 impl SparseMerkleTree {
     pub fn new(depth: usize) -> Self {
-        let mut defaults = vec![M31::from(0u32); depth + 1];
+        let mut defaults = vec![HASH_ZERO; depth + 1];
         for d in 1..=depth {
             defaults[d] = merkle_hash(defaults[d - 1], defaults[d - 1]);
         }
         SparseMerkleTree { depth, nodes: HashMap::new(), default_hashes: defaults }
     }
 
-    pub fn set_leaf(&mut self, index: usize, value: M31) {
+    pub fn set_leaf(&mut self, index: usize, value: HashOut) {
         let pos = (1 << self.depth) + index;
         self.nodes.insert(pos, value);
         let mut idx = pos;
@@ -348,7 +424,7 @@ impl SparseMerkleTree {
         }
     }
 
-    fn get_node(&self, pos: usize) -> M31 {
+    fn get_node(&self, pos: usize) -> HashOut {
         if let Some(&v) = self.nodes.get(&pos) {
             return v;
         }
@@ -356,11 +432,11 @@ impl SparseMerkleTree {
         self.default_hashes[self.depth - level_from_top]
     }
 
-    pub fn root(&self) -> M31 {
+    pub fn root(&self) -> HashOut {
         self.get_node(1)
     }
 
-    pub fn path(&self, leaf_index: usize) -> Vec<(M31, u32)> {
+    pub fn path(&self, leaf_index: usize) -> Vec<(HashOut, u32)> {
         let mut result = Vec::with_capacity(self.depth);
         let mut idx = (1 << self.depth) + leaf_index;
         while idx > 1 {
@@ -374,7 +450,7 @@ impl SparseMerkleTree {
     }
 }
 
-pub fn verify_merkle_path(leaf: M31, path: &[(M31, u32)], root: M31) -> bool {
+pub fn verify_merkle_path(leaf: HashOut, path: &[(HashOut, u32)], root: HashOut) -> bool {
     let mut current = leaf;
     for &(sibling, direction) in path {
         if direction == 0 {
@@ -384,6 +460,34 @@ pub fn verify_merkle_path(leaf: M31, path: &[(M31, u32)], root: M31) -> bool {
         }
     }
     current == root
+}
+
+/// Convert HashOut to 32-character hex string (4 × 8 hex digits).
+pub fn hashout_to_hex(h: HashOut) -> String {
+    format!("{:08x}{:08x}{:08x}{:08x}", h[0].0, h[1].0, h[2].0, h[3].0)
+}
+
+/// Parse 32-character hex string back to HashOut.
+pub fn hex_to_hashout(s: &str) -> Result<HashOut, String> {
+    if s.len() != 32 {
+        return Err(format!("expected 32 hex chars, got {}", s.len()));
+    }
+    Ok([
+        M31(u32::from_str_radix(&s[0..8], 16).map_err(|e| e.to_string())?),
+        M31(u32::from_str_radix(&s[8..16], 16).map_err(|e| e.to_string())?),
+        M31(u32::from_str_radix(&s[16..24], 16).map_err(|e| e.to_string())?),
+        M31(u32::from_str_radix(&s[24..32], 16).map_err(|e| e.to_string())?),
+    ])
+}
+
+/// Convert HashOut to [u32; 4] for WASM boundary and serialization.
+pub fn hashout_to_u32_array(h: HashOut) -> [u32; 4] {
+    [h[0].0, h[1].0, h[2].0, h[3].0]
+}
+
+/// Convert [u32; 4] back to HashOut.
+pub fn u32_array_to_hashout(arr: [u32; 4]) -> HashOut {
+    [M31(arr[0]), M31(arr[1]), M31(arr[2]), M31(arr[3])]
 }
 
 #[cfg(test)]
@@ -608,6 +712,11 @@ mod tests {
         }
     }
 
+    /// Helper: create a simple HashOut for testing from a single u32 value.
+    fn test_hashout(v: u32) -> HashOut {
+        [M31(v), M31(0), M31(0), M31(0)]
+    }
+
     #[test]
     fn test_all_domains_distinct() {
         // Every domain tag pair should produce different outputs for same inputs
@@ -625,8 +734,9 @@ mod tests {
         let mut outputs = std::collections::HashSet::new();
         for &d in &domains {
             let h = hash2_with_domain(a, b, d);
+            let key = hashout_to_hex(h);
             assert!(
-                outputs.insert(h.0),
+                outputs.insert(key),
                 "Domain {} collides with a previous domain for inputs ({}, {})",
                 d,
                 a.0,
@@ -638,99 +748,58 @@ mod tests {
     #[test]
     fn test_commitment_binding() {
         // Changing any single input to note_commitment changes the output
-        // Using note_commitment_u64(asset, amount_u64, owner, randomness)
-        let base =
-            note_commitment_u64(M31::from(1u32), 100u64, M31::from(50u32), M31::from(999u32));
+        let owner_a = derive_owner(M31::from(50u32));
+        let owner_b = derive_owner(M31::from(51u32));
+        let base = note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(999u32));
         // Change asset
-        assert_ne!(
-            base,
-            note_commitment_u64(M31::from(2u32), 100u64, M31::from(50u32), M31::from(999u32),)
-        );
+        assert_ne!(base, note_commitment_u64(M31::from(2u32), 100u64, owner_a, M31::from(999u32)));
         // Change amount
-        assert_ne!(
-            base,
-            note_commitment_u64(M31::from(1u32), 101u64, M31::from(50u32), M31::from(999u32),)
-        );
+        assert_ne!(base, note_commitment_u64(M31::from(1u32), 101u64, owner_a, M31::from(999u32)));
         // Change owner
-        assert_ne!(
-            base,
-            note_commitment_u64(M31::from(1u32), 100u64, M31::from(51u32), M31::from(999u32),)
-        );
+        assert_ne!(base, note_commitment_u64(M31::from(1u32), 100u64, owner_b, M31::from(999u32)));
         // Change blinding
-        assert_ne!(
-            base,
-            note_commitment_u64(M31::from(1u32), 100u64, M31::from(50u32), M31::from(998u32),)
-        );
+        assert_ne!(base, note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(998u32)));
     }
 
     #[test]
     fn test_credential_commitment_binding() {
-        let base = credential_commitment(
-            M31::from(10u32),
-            M31::from(20u32),
-            M31::from(30u32),
-            M31::from(40u32),
-        );
-        assert_ne!(
-            base,
-            credential_commitment(
-                M31::from(11u32),
-                M31::from(20u32),
-                M31::from(30u32),
-                M31::from(40u32)
-            )
-        );
-        assert_ne!(
-            base,
-            credential_commitment(
-                M31::from(10u32),
-                M31::from(21u32),
-                M31::from(30u32),
-                M31::from(40u32)
-            )
-        );
-        assert_ne!(
-            base,
-            credential_commitment(
-                M31::from(10u32),
-                M31::from(20u32),
-                M31::from(31u32),
-                M31::from(40u32)
-            )
-        );
-        assert_ne!(
-            base,
-            credential_commitment(
-                M31::from(10u32),
-                M31::from(20u32),
-                M31::from(30u32),
-                M31::from(41u32)
-            )
-        );
+        let issuer = derive_issuer_id(M31::from(10u32));
+        let issuer2 = derive_issuer_id(M31::from(11u32));
+        let owner = derive_owner(M31::from(20u32));
+        let owner2 = derive_owner(M31::from(21u32));
+        let base = credential_commitment(issuer, owner, M31::from(30u32), M31::from(40u32));
+        // Change issuer
+        assert_ne!(base, credential_commitment(issuer2, owner, M31::from(30u32), M31::from(40u32)));
+        // Change owner
+        assert_ne!(base, credential_commitment(issuer, owner2, M31::from(30u32), M31::from(40u32)));
+        // Change expiry
+        assert_ne!(base, credential_commitment(issuer, owner, M31::from(31u32), M31::from(40u32)));
+        // Change secret
+        assert_ne!(base, credential_commitment(issuer, owner, M31::from(30u32), M31::from(41u32)));
     }
 
     #[test]
     fn test_merkle_hash_uses_domain() {
-        // merkle_hash(a, b) should equal hash2_with_domain(a, b, DOMAIN_MERKLE)
-        let a = M31::from(111u32);
-        let b = M31::from(222u32);
+        // merkle_hash(a, b) should equal hash_pair(a, b, DOMAIN_MERKLE)
+        let a = test_hashout(111);
+        let b = test_hashout(222);
         let mh = merkle_hash(a, b);
-        let dh = hash2_with_domain(a, b, DOMAIN_MERKLE);
-        assert_eq!(mh, dh, "merkle_hash should use DOMAIN_MERKLE");
+        let dh = hash_pair(a, b, DOMAIN_MERKLE);
+        assert_eq!(mh, dh, "merkle_hash should use DOMAIN_MERKLE via hash_pair");
     }
 
     #[test]
     fn test_nullifier_binding() {
         // Different secret keys produce different nullifiers for same note
-        let note_cm = M31::from(12345u32);
+        let note_cm = test_hashout(12345);
         let n1 = nullifier(M31::from(1u32), note_cm);
         let n2 = nullifier(M31::from(2u32), note_cm);
         assert_ne!(n1, n2, "Different keys must produce different nullifiers");
 
         // Same key, different notes produce different nullifiers
         let sk = M31::from(42u32);
-        let n1 = nullifier(sk, M31::from(100u32));
-        let n2 = nullifier(sk, M31::from(101u32));
+        let n1 = nullifier(sk, test_hashout(100));
+        let n2 = nullifier(sk, test_hashout(101));
         assert_ne!(n1, n2, "Same key, different notes must produce different nullifiers");
     }
 
@@ -810,19 +879,17 @@ mod tests {
     #[test]
     fn test_domain_separation() {
         let sk = M31::from(42u32);
-        // derive_owner and nullifier use different domains, so even if
-        // the second input happens to collide, the outputs differ
+        // derive_owner and derive_issuer_id use different domains
         let owner = derive_owner(sk);
-        let null = nullifier(sk, M31::from(0u32));
-        assert_ne!(owner, null, "Domain separation should prevent collision");
+        let issuer = derive_issuer_id(sk);
+        assert_ne!(owner, issuer, "Domain separation should prevent collision");
     }
 
     #[test]
     fn test_note_commitment() {
-        let cm =
-            note_commitment_u64(M31::from(1u32), 7000u64, M31::from(9999u32), M31::from(111u32));
-        let cm2 =
-            note_commitment_u64(M31::from(1u32), 7000u64, M31::from(9999u32), M31::from(111u32));
+        let owner = derive_owner(M31::from(9999u32));
+        let cm = note_commitment_u64(M31::from(1u32), 7000u64, owner, M31::from(111u32));
+        let cm2 = note_commitment_u64(M31::from(1u32), 7000u64, owner, M31::from(111u32));
         assert_eq!(cm, cm2);
     }
 
@@ -838,8 +905,8 @@ mod tests {
     fn test_credential_nullifier_tied_to_commitment() {
         let secret = M31::from(777u32);
         let epoch = M31::from(1000u32);
-        let cm1 = M31::from(111u32);
-        let cm2 = M31::from(222u32);
+        let cm1 = test_hashout(111);
+        let cm2 = test_hashout(222);
         // Different credentials with same secret and epoch produce different nullifiers
         let null1 = credential_nullifier(secret, cm1, epoch);
         let null2 = credential_nullifier(secret, cm2, epoch);
@@ -848,10 +915,10 @@ mod tests {
 
     #[test]
     fn test_merkle_tree_and_path() {
-        let mut leaves = vec![M31::from(0u32); 256];
-        leaves[0] = M31::from(111u32);
-        leaves[1] = M31::from(222u32);
-        leaves[5] = M31::from(333u32);
+        let mut leaves = vec![HASH_ZERO; 256];
+        leaves[0] = test_hashout(111);
+        leaves[1] = test_hashout(222);
+        leaves[5] = test_hashout(333);
 
         let tree = build_merkle_tree(&leaves);
         let root = tree[1];
@@ -865,20 +932,20 @@ mod tests {
         }
 
         // Wrong leaf should fail
-        assert!(!verify_merkle_path(M31::from(999u32), &merkle_path(&tree, 0), root));
+        assert!(!verify_merkle_path(test_hashout(999), &merkle_path(&tree, 0), root));
     }
 
     #[test]
     fn test_sparse_merkle_tree() {
         // Sparse tree should produce same root as dense tree for same leaves
-        let mut dense_leaves = vec![M31::from(0u32); 256];
-        dense_leaves[0] = M31::from(111u32);
-        dense_leaves[3] = M31::from(444u32);
+        let mut dense_leaves = vec![HASH_ZERO; 256];
+        dense_leaves[0] = test_hashout(111);
+        dense_leaves[3] = test_hashout(444);
         let dense_root = build_merkle_tree(&dense_leaves)[1];
 
         let mut sparse = SparseMerkleTree::new(8);
-        sparse.set_leaf(0, M31::from(111u32));
-        sparse.set_leaf(3, M31::from(444u32));
+        sparse.set_leaf(0, test_hashout(111));
+        sparse.set_leaf(3, test_hashout(444));
         assert_eq!(sparse.root(), dense_root, "Sparse and dense roots must match");
 
         // Paths should also match
@@ -895,25 +962,53 @@ mod tests {
 
         // Verify paths against root
         for idx in [0, 3] {
-            let leaf = if idx == 0 { M31::from(111u32) } else { M31::from(444u32) };
+            let leaf = if idx == 0 { test_hashout(111) } else { test_hashout(444) };
             assert!(verify_merkle_path(leaf, &sparse.path(idx), sparse.root()));
         }
     }
 
     #[test]
-    fn regression_hash_42_99() {
-        // Hardcoded regression value, do not change
-        let h = hash2_with_domain(M31::from(42u32), M31::from(99u32), DOMAIN_NULLIFIER);
-        assert_eq!(h.0, nullifier(M31::from(42u32), M31::from(99u32)).0);
+    fn test_hashout_hex_roundtrip() {
+        let h = derive_owner(M31::from(42u32));
+        let hex = hashout_to_hex(h);
+        assert_eq!(hex.len(), 32);
+        let decoded = hex_to_hashout(&hex).unwrap();
+        assert_eq!(h, decoded);
+    }
+
+    #[test]
+    fn test_sponge_multi_block() {
+        // Verify multi-block sponge produces different output than single-block
+        let inputs_short: Vec<M31> = (0..4).map(|i| M31::from(i as u32)).collect();
+        let inputs_long: Vec<M31> = (0..12).map(|i| M31::from(i as u32)).collect();
+        let h_short = sponge_hash(&inputs_short, DOMAIN_NOTE_CM);
+        let h_long = sponge_hash(&inputs_long, DOMAIN_NOTE_CM);
+        assert_ne!(h_short, h_long, "Different length inputs must produce different outputs");
+
+        // Multi-block must be deterministic
+        let h_long2 = sponge_hash(&inputs_long, DOMAIN_NOTE_CM);
+        assert_eq!(h_long, h_long2);
+    }
+
+    #[test]
+    fn test_hashout_is_4_elements() {
+        // Verify hash outputs use all 4 elements, not just element[0]
+        let h = derive_owner(M31::from(12345u32));
+        let nonzero = h.iter().filter(|x| x.0 != 0).count();
+        assert!(
+            nonzero >= 3,
+            "Hash output should use most of the 4 elements, got {nonzero} non-zero"
+        );
     }
 
     #[test]
     fn test_sparse_tree_single_leaf() {
+        let leaf = test_hashout(0xdead);
         let mut tree = SparseMerkleTree::new(20);
-        tree.set_leaf(7, M31::from(0xdeadu32));
+        tree.set_leaf(7, leaf);
         let path = tree.path(7);
-        assert!(verify_merkle_path(M31::from(0xdeadu32), &path, tree.root()));
-        assert!(!verify_merkle_path(M31::from(0xbeefu32), &path, tree.root()));
+        assert!(verify_merkle_path(leaf, &path, tree.root()));
+        assert!(!verify_merkle_path(test_hashout(0xbeef), &path, tree.root()));
     }
 }
 
@@ -928,23 +1023,24 @@ mod proptests {
         fn commitment_binding(
             asset in 0u32..((1u32 << 31) - 2),
             amt in 0u32..((1u32 << 21) - 1),
-            owner in 1u32..((1u32 << 31) - 2),
+            owner_sk in 1u32..((1u32 << 31) - 2),
             rand in 0u32..((1u32 << 31) - 2),
         ) {
+            let owner = derive_owner(M31::from(owner_sk));
             let base = note_commitment_u64(
-                M31::from(asset), u64::from(amt), M31::from(owner), M31::from(rand),
+                M31::from(asset), u64::from(amt), owner, M31::from(rand),
             );
-            // Changing any single input must change the output
+            // Changing asset must change the output
             let c1 = note_commitment_u64(
                 M31::from(asset.wrapping_add(1) % ((1u32 << 31) - 1)),
-                u64::from(amt), M31::from(owner), M31::from(rand),
+                u64::from(amt), owner, M31::from(rand),
             );
             prop_assert_ne!(base, c1);
         }
 
         #[test]
         fn merkle_path_roundtrip(seed in 0u32..1000u32) {
-            let leaves: Vec<M31> = (0..16).map(|i| M31::from(seed + i)).collect();
+            let leaves: Vec<HashOut> = (0..16).map(|i| [M31(seed + i), M31(0), M31(0), M31(0)]).collect();
             let tree = build_merkle_tree(&leaves);
             let root = tree[1];
             for idx in 0..16 {
@@ -957,11 +1053,12 @@ mod proptests {
         fn distinct_keys_distinct_nullifiers(
             sk1 in 1u32..((1u32 << 31) - 2),
             sk2 in 1u32..((1u32 << 31) - 2),
-            cm in 1u32..((1u32 << 31) - 2),
+            cm_val in 1u32..((1u32 << 31) - 2),
         ) {
             prop_assume!(sk1 != sk2);
-            let n1 = nullifier(M31::from(sk1), M31::from(cm));
-            let n2 = nullifier(M31::from(sk2), M31::from(cm));
+            let cm = [M31(cm_val), M31(0), M31(0), M31(0)];
+            let n1 = nullifier(M31::from(sk1), cm);
+            let n2 = nullifier(M31::from(sk2), cm);
             prop_assert_ne!(n1, n2);
         }
     }

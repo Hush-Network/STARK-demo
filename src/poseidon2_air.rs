@@ -20,6 +20,8 @@ const NUM_FULL_ROUNDS: usize = NUM_FULL_ROUNDS_FIRST + NUM_FULL_ROUNDS_LAST;
 pub const HASH_INTERMEDIATE_COLS: usize =
     NUM_FULL_ROUNDS * FULL_ROUND_COLS + NUM_PARTIAL_ROUNDS * PARTIAL_ROUND_COLS;
 
+pub const SPONGE_2BLOCK_INTERMEDIATE_COLS: usize = 2 * HASH_INTERMEDIATE_COLS;
+
 fn is_full_round(round_index: usize) -> bool {
     !(NUM_FULL_ROUNDS_FIRST..NUM_FULL_ROUNDS_FIRST + NUM_PARTIAL_ROUNDS).contains(&round_index)
 }
@@ -170,16 +172,6 @@ pub fn gen_hash2_intermediates(a: M31, b: M31, domain: u32) -> Vec<M31> {
     gen_permutation_intermediates(&input)
 }
 
-pub fn gen_hash_many_4_intermediates(i0: M31, i1: M31, i2: M31, i3: M31, domain: u32) -> Vec<M31> {
-    let mut input = [M31::from(0u32); WIDTH];
-    input[0] = i0;
-    input[1] = i1;
-    input[2] = i2;
-    input[3] = i3;
-    input[RATE] = M31::from(domain);
-    gen_permutation_intermediates(&input)
-}
-
 pub fn constrain_permutation<E: EvalAtRow>(eval: &mut E, input: [E::F; WIDTH]) -> [E::F; WIDTH] {
     // Initial external linear layer (linear, no extra columns needed)
     let mut prev: Vec<E::F> = {
@@ -297,31 +289,13 @@ pub fn constrain_permutation<E: EvalAtRow>(eval: &mut E, input: [E::F; WIDTH]) -
     core::array::from_fn(|i| prev[i].clone())
 }
 
-pub fn constrain_hash2<E: EvalAtRow>(eval: &mut E, a: E::F, b: E::F, domain: u32) -> E::F {
+pub fn constrain_hash2<E: EvalAtRow>(eval: &mut E, a: E::F, b: E::F, domain: u32) -> [E::F; 4] {
     let mut input = core::array::from_fn(|_| E::F::zero());
     input[0] = a;
     input[1] = b;
     input[RATE] = E::F::from(M31::from(domain));
     let output = constrain_permutation(eval, input);
-    output[0].clone()
-}
-
-pub fn constrain_hash_many_4<E: EvalAtRow>(
-    eval: &mut E,
-    i0: E::F,
-    i1: E::F,
-    i2: E::F,
-    i3: E::F,
-    domain: u32,
-) -> E::F {
-    let mut input = core::array::from_fn(|_| E::F::zero());
-    input[0] = i0;
-    input[1] = i1;
-    input[2] = i2;
-    input[3] = i3;
-    input[RATE] = E::F::from(M31::from(domain));
-    let output = constrain_permutation(eval, input);
-    output[0].clone()
+    [output[0].clone(), output[1].clone(), output[2].clone(), output[3].clone()]
 }
 
 pub fn gen_hash_many_7_intermediates(
@@ -346,6 +320,45 @@ pub fn gen_hash_many_7_intermediates(
     gen_permutation_intermediates(&input)
 }
 
+pub fn gen_hash_pair_intermediates(a: [M31; 4], b: [M31; 4], domain: u32) -> Vec<M31> {
+    let mut input = [M31::from(0u32); WIDTH];
+    input[0] = a[0];
+    input[1] = a[1];
+    input[2] = a[2];
+    input[3] = a[3];
+    input[4] = b[0];
+    input[5] = b[1];
+    input[6] = b[2];
+    input[7] = b[3];
+    input[RATE] = M31::from(domain);
+    gen_permutation_intermediates(&input)
+}
+
+pub fn gen_sponge_2block_intermediates(inputs: &[M31], domain: u32) -> Vec<M31> {
+    assert!(inputs.len() > RATE && inputs.len() <= 2 * RATE);
+
+    // Block 1: first RATE inputs placed directly, domain in capacity
+    let mut state = [M31::from(0u32); WIDTH];
+    for (i, &val) in inputs[..RATE].iter().enumerate() {
+        state[i] = val;
+    }
+    state[RATE] = M31::from(domain);
+    let block1_intermediates = gen_permutation_intermediates(&state);
+
+    // Compute block 1 output by running the permutation
+    crate::poseidon2::permute_state(&mut state);
+
+    // Block 2: add remaining inputs to rate portion of block 1 output
+    for (i, &val) in inputs[RATE..].iter().enumerate() {
+        state[i] += val;
+    }
+    let block2_intermediates = gen_permutation_intermediates(&state);
+
+    let mut all = block1_intermediates;
+    all.extend(block2_intermediates);
+    all
+}
+
 pub fn constrain_hash_many_7<E: EvalAtRow>(
     eval: &mut E,
     i0: E::F,
@@ -356,7 +369,7 @@ pub fn constrain_hash_many_7<E: EvalAtRow>(
     i5: E::F,
     i6: E::F,
     domain: u32,
-) -> E::F {
+) -> [E::F; 4] {
     let mut input = core::array::from_fn(|_| E::F::zero());
     input[0] = i0;
     input[1] = i1;
@@ -367,7 +380,58 @@ pub fn constrain_hash_many_7<E: EvalAtRow>(
     input[6] = i6;
     input[RATE] = E::F::from(M31::from(domain));
     let output = constrain_permutation(eval, input);
-    output[0].clone()
+    [output[0].clone(), output[1].clone(), output[2].clone(), output[3].clone()]
+}
+
+pub fn constrain_hash_pair<E: EvalAtRow>(
+    eval: &mut E,
+    a: [E::F; 4],
+    b: [E::F; 4],
+    domain: u32,
+) -> [E::F; 4] {
+    let mut input = core::array::from_fn(|_| E::F::zero());
+    input[0] = a[0].clone();
+    input[1] = a[1].clone();
+    input[2] = a[2].clone();
+    input[3] = a[3].clone();
+    input[4] = b[0].clone();
+    input[5] = b[1].clone();
+    input[6] = b[2].clone();
+    input[7] = b[3].clone();
+    input[RATE] = E::F::from(M31::from(domain));
+    let output = constrain_permutation(eval, input);
+    [output[0].clone(), output[1].clone(), output[2].clone(), output[3].clone()]
+}
+
+pub fn constrain_sponge_2block<E: EvalAtRow>(
+    eval: &mut E,
+    inputs: &[E::F],
+    domain: u32,
+) -> [E::F; 4] {
+    assert!(inputs.len() > RATE && inputs.len() <= 2 * RATE);
+
+    // Block 1: first RATE inputs placed directly, domain in capacity
+    let mut block1_input: [E::F; WIDTH] = core::array::from_fn(|_| E::F::zero());
+    for (i, val) in inputs[..RATE].iter().enumerate() {
+        block1_input[i] = val.clone();
+    }
+    block1_input[RATE] = E::F::from(M31::from(domain));
+    let block1_output = constrain_permutation(eval, block1_input);
+
+    // Block 2: block1 output + remaining inputs absorbed into rate portion
+    let remaining = &inputs[RATE..];
+    let mut block2_input: [E::F; WIDTH] = core::array::from_fn(|i| block1_output[i].clone());
+    for (i, val) in remaining.iter().enumerate() {
+        block2_input[i] = block2_input[i].clone() + val.clone();
+    }
+    let block2_output = constrain_permutation(eval, block2_input);
+
+    [
+        block2_output[0].clone(),
+        block2_output[1].clone(),
+        block2_output[2].clone(),
+        block2_output[3].clone(),
+    ]
 }
 
 // Standalone hash2 prove/verify, only used in tests.
@@ -609,8 +673,12 @@ mod tests {
     fn test_poseidon2_air_owner_derivation() {
         let sk = 42u32;
         let owner = poseidon2::derive_owner(M31::from(sk));
-        let witness =
-            Hash2Witness { a: sk, b: 0, domain: poseidon2::DOMAIN_OWNER, expected_output: owner.0 };
+        let witness = Hash2Witness {
+            a: sk,
+            b: 0,
+            domain: poseidon2::DOMAIN_OWNER,
+            expected_output: owner[0].0,
+        };
         let result = prove_hash2(&witness).expect("Proof should succeed");
         verify_hash2(&result).expect("Verification should succeed");
     }
