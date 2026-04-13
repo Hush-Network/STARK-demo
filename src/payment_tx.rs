@@ -482,10 +482,7 @@ pub fn expected_fee_amount(
         (PaymentRoute::HushSidecar, PAYMENT_FEE_SCHEDULE_STANDARD) => Ok(50),
         (PaymentRoute::HushSidecar, PAYMENT_FEE_SCHEDULE_BUSY) => Ok(125),
         (PaymentRoute::HushSidecar, PAYMENT_FEE_SCHEDULE_PEAK) => Ok(300),
-        _ => Err(format!(
-            "unsupported payment fee schedule version {}",
-            fee_schedule_version
-        )),
+        _ => Err(format!("unsupported payment fee schedule version {fee_schedule_version}")),
     }
 }
 

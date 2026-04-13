@@ -28,9 +28,7 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    payment_tx::{
-        compute_mode_a_tx_binding_hash, derive_sender_binding_tag,
-    },
+    payment_tx::{compute_mode_a_tx_binding_hash, derive_sender_binding_tag},
     poseidon2, poseidon2_air,
     prover_common::{pcs_config, ProverChannel, ProverMerkleChannel, ProverMerkleHasher},
     types::{
@@ -519,53 +517,93 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
     let null0_hash_cols = {
         let mut input = [M31::from(0u32); poseidon2::WIDTH];
         input[0] = sk;
-        input[1] = in_cm_0[0]; input[2] = in_cm_0[1];
-        input[3] = in_cm_0[2]; input[4] = in_cm_0[3];
+        input[1] = in_cm_0[0];
+        input[2] = in_cm_0[1];
+        input[3] = in_cm_0[2];
+        input[4] = in_cm_0[3];
         input[poseidon2::RATE] = M31::from(poseidon2::DOMAIN_NULLIFIER);
         poseidon2_air::gen_permutation_intermediates(&input)
     };
     let null1_hash_cols = {
         let mut input = [M31::from(0u32); poseidon2::WIDTH];
         input[0] = sk;
-        input[1] = in_cm_1[0]; input[2] = in_cm_1[1];
-        input[3] = in_cm_1[2]; input[4] = in_cm_1[3];
+        input[1] = in_cm_1[0];
+        input[2] = in_cm_1[1];
+        input[3] = in_cm_1[2];
+        input[4] = in_cm_1[3];
         input[poseidon2::RATE] = M31::from(poseidon2::DOMAIN_NULLIFIER);
         poseidon2_air::gen_permutation_intermediates(&input)
     };
 
     // 4-5. Note commitments: 10-input sponge (2 blocks)
     let cm0_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
-        &[in_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3],
-          owner[0], owner[1], owner[2], owner[3], in_rand_0],
+        &[
+            in_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner[0], owner[1], owner[2],
+            owner[3], in_rand_0,
+        ],
         poseidon2::DOMAIN_NOTE_CM,
     );
     let cm1_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
-        &[in_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3],
-          owner[0], owner[1], owner[2], owner[3], in_rand_1],
+        &[
+            in_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner[0], owner[1], owner[2],
+            owner[3], in_rand_1,
+        ],
         poseidon2::DOMAIN_NOTE_CM,
     );
 
     // 6. Issuer ID derivation (single-block)
     let issuerid_hash_cols = poseidon2_air::gen_hash2_intermediates(
-        cred_issuer, M31::from(0u32), poseidon2::DOMAIN_ISSUER_ID,
+        cred_issuer,
+        M31::from(0u32),
+        poseidon2::DOMAIN_ISSUER_ID,
     );
 
     // 7. Credential commitment: 10-input sponge (2 blocks)
     let credcm_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
-        &[issuer_id[0], issuer_id[1], issuer_id[2], issuer_id[3],
-          owner[0], owner[1], owner[2], owner[3], cred_expiry, cred_secret],
+        &[
+            issuer_id[0],
+            issuer_id[1],
+            issuer_id[2],
+            issuer_id[3],
+            owner[0],
+            owner[1],
+            owner[2],
+            owner[3],
+            cred_expiry,
+            cred_secret,
+        ],
         poseidon2::DOMAIN_CRED_CM,
     );
 
     // 8-9. Output commitments: 10-input sponge (2 blocks)
     let outcm0_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
-        &[in_asset, out0_m31[0], out0_m31[1], out0_m31[2], out0_m31[3],
-          out_owner_0[0], out_owner_0[1], out_owner_0[2], out_owner_0[3], out_rand_0],
+        &[
+            in_asset,
+            out0_m31[0],
+            out0_m31[1],
+            out0_m31[2],
+            out0_m31[3],
+            out_owner_0[0],
+            out_owner_0[1],
+            out_owner_0[2],
+            out_owner_0[3],
+            out_rand_0,
+        ],
         poseidon2::DOMAIN_NOTE_CM,
     );
     let outcm1_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
-        &[in_asset, out1_m31[0], out1_m31[1], out1_m31[2], out1_m31[3],
-          owner[0], owner[1], owner[2], owner[3], out_rand_1],
+        &[
+            in_asset,
+            out1_m31[0],
+            out1_m31[1],
+            out1_m31[2],
+            out1_m31[3],
+            owner[0],
+            owner[1],
+            owner[2],
+            owner[3],
+            out_rand_1,
+        ],
         poseidon2::DOMAIN_NOTE_CM,
     );
 
@@ -573,8 +611,10 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
     let crednull_hash_cols = {
         let mut input = [M31::from(0u32); poseidon2::WIDTH];
         input[0] = cred_secret;
-        input[1] = cred_cm[0]; input[2] = cred_cm[1];
-        input[3] = cred_cm[2]; input[4] = cred_cm[3];
+        input[1] = cred_cm[0];
+        input[2] = cred_cm[1];
+        input[3] = cred_cm[2];
+        input[4] = cred_cm[3];
         input[5] = epoch;
         input[poseidon2::RATE] = M31::from(poseidon2::DOMAIN_CRED_NULL);
         poseidon2_air::gen_permutation_intermediates(&input)

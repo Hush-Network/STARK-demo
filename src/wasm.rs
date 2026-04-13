@@ -36,12 +36,15 @@ fn demo_random_u32() -> u32 {
     let mut bytes = [0u8; 4];
     getrandom::getrandom(&mut bytes).expect("secure randomness should be available");
     let sample = u32::from_le_bytes(bytes) & 0x7fff_ffff;
-    if sample == 0 { 1 } else { sample }
+    if sample == 0 {
+        1
+    } else {
+        sample
+    }
 }
 
 use crate::{
-    circuit,
-    credential_issuance,
+    circuit, credential_issuance,
     dual_fee_runtime::{
         dual_fee_review_snapshot, quote_payment, submit_wallet_payment, WalletQuoteRequest,
         WalletSubmissionRequest,
@@ -550,33 +553,59 @@ pub struct AuditOutput {
 #[wasm_bindgen]
 impl AuditOutput {
     #[wasm_bindgen(getter)]
-    pub fn success(&self) -> bool { self.success }
+    pub fn success(&self) -> bool {
+        self.success
+    }
     #[wasm_bindgen(getter)]
-    pub fn message(&self) -> String { self.message.clone() }
+    pub fn message(&self) -> String {
+        self.message.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn prove_time_ms(&self) -> f64 { self.prove_time_ms }
+    pub fn prove_time_ms(&self) -> f64 {
+        self.prove_time_ms
+    }
     #[wasm_bindgen(getter)]
-    pub fn verify_time_ms(&self) -> f64 { self.verify_time_ms }
+    pub fn verify_time_ms(&self) -> f64 {
+        self.verify_time_ms
+    }
     #[wasm_bindgen(getter)]
-    pub fn proof_bytes(&self) -> String { self.proof_bytes.clone() }
+    pub fn proof_bytes(&self) -> String {
+        self.proof_bytes.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn window_start(&self) -> u32 { self.window_start }
+    pub fn window_start(&self) -> u32 {
+        self.window_start
+    }
     #[wasm_bindgen(getter)]
-    pub fn window_end(&self) -> u32 { self.window_end }
+    pub fn window_end(&self) -> u32 {
+        self.window_end
+    }
     #[wasm_bindgen(getter)]
-    pub fn claimed_total(&self) -> f64 { self.claimed_total }
+    pub fn claimed_total(&self) -> f64 {
+        self.claimed_total
+    }
     #[wasm_bindgen(getter)]
     pub fn cred_null(&self) -> String {
-        format!("{:08x}{:08x}{:08x}{:08x}", self.cred_null[0], self.cred_null[1], self.cred_null[2], self.cred_null[3])
+        format!(
+            "{:08x}{:08x}{:08x}{:08x}",
+            self.cred_null[0], self.cred_null[1], self.cred_null[2], self.cred_null[3]
+        )
     }
     #[wasm_bindgen(getter)]
     pub fn cred_root(&self) -> String {
-        format!("{:08x}{:08x}{:08x}{:08x}", self.cred_root[0], self.cred_root[1], self.cred_root[2], self.cred_root[3])
+        format!(
+            "{:08x}{:08x}{:08x}{:08x}",
+            self.cred_root[0], self.cred_root[1], self.cred_root[2], self.cred_root[3]
+        )
     }
     #[wasm_bindgen(getter)]
-    pub fn epoch(&self) -> u32 { self.epoch }
+    pub fn epoch(&self) -> u32 {
+        self.epoch
+    }
     #[wasm_bindgen(getter)]
-    pub fn log_num_rows(&self) -> u32 { self.log_num_rows }
+    pub fn log_num_rows(&self) -> u32 {
+        self.log_num_rows
+    }
 }
 
 #[wasm_bindgen]
@@ -661,9 +690,18 @@ pub fn prove_demo_credential_issuance(
 
 fn audit_error(message: String) -> AuditOutput {
     AuditOutput {
-        success: false, message, prove_time_ms: 0.0, verify_time_ms: 0.0,
-        proof_bytes: String::new(), window_start: 0, window_end: 0,
-        claimed_total: 0.0, cred_root: [0; 4], cred_null: [0; 4], epoch: 0, log_num_rows: 0,
+        success: false,
+        message,
+        prove_time_ms: 0.0,
+        verify_time_ms: 0.0,
+        proof_bytes: String::new(),
+        window_start: 0,
+        window_end: 0,
+        claimed_total: 0.0,
+        cred_root: [0; 4],
+        cred_null: [0; 4],
+        epoch: 0,
+        log_num_rows: 0,
     }
 }
 
@@ -776,8 +814,13 @@ pub fn prove_time_window_audit(
             prove_time_ms: prove_time,
             verify_time_ms: js_sys::Date::now() - verify_start,
             proof_bytes: String::new(),
-            window_start: 0, window_end: 0, claimed_total: 0.0,
-            cred_root: [0; 4], cred_null: [0; 4], epoch: 0, log_num_rows: 0,
+            window_start: 0,
+            window_end: 0,
+            claimed_total: 0.0,
+            cred_root: [0; 4],
+            cred_null: [0; 4],
+            epoch: 0,
+            log_num_rows: 0,
         },
     }
 }
@@ -796,10 +839,11 @@ pub fn verify_audit_proof(
     log_num_rows: u32,
 ) -> String {
     use num_traits::Zero;
-    use stwo::core::fields::qm31::QM31;
+    use stwo::core::{
+        air::Component, channel::Channel, fields::qm31::QM31, pcs::CommitmentSchemeVerifier,
+        verifier::verify,
+    };
     use stwo_constraint_framework::{FrameworkComponent, TraceLocationAllocator};
-
-    use stwo::core::{air::Component, channel::Channel, pcs::CommitmentSchemeVerifier, verifier::verify};
 
     use crate::{
         prover_common::{pcs_config, ProverChannel, ProverMerkleChannel, ProverMerkleHasher},
@@ -812,11 +856,19 @@ pub fn verify_audit_proof(
     };
 
     fn to_arr(s: &[u32], name: &str) -> Result<[u32; 4], String> {
-        if s.len() != 4 { return Err(format!("{name} must have 4 elements")); }
+        if s.len() != 4 {
+            return Err(format!("{name} must have 4 elements"));
+        }
         Ok([s[0], s[1], s[2], s[3]])
     }
-    let cred_root = match to_arr(cred_root, "cred_root") { Ok(v) => v, Err(e) => return e };
-    let cred_null = match to_arr(cred_null, "cred_null") { Ok(v) => v, Err(e) => return e };
+    let cred_root = match to_arr(cred_root, "cred_root") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let cred_null = match to_arr(cred_null, "cred_null") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
 
     // Decode proof
     let json_bytes = match base64_decode(proof_b64) {
@@ -834,8 +886,12 @@ pub fn verify_audit_proof(
         };
 
     let public_data = TimeWindowPublicData {
-        window_start, window_end, claimed_total: claimed_total_u64,
-        cred_root, cred_null, epoch,
+        window_start,
+        window_end,
+        claimed_total: claimed_total_u64,
+        cred_root,
+        cred_null,
+        epoch,
     };
 
     let config = pcs_config();

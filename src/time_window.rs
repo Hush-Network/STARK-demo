@@ -43,8 +43,8 @@ const MERKLE_LEVEL_COLS: usize = 9 + poseidon2_air::HASH_INTERMEDIATE_COLS;
 
 const COLS_PER_TX: usize = 1 + NUM_LIMBS + 2 * (1 + RANGE_BITS);
 
-const TX_COLS_START: usize = 2 + NUM_LIMBS + 4 + 4 + 5 + MAX_TX * NUM_LIMBS + MAX_TX + 1 + 16
-    + NUM_CARRIES * SUM_CARRY_BITS;
+const TX_COLS_START: usize =
+    2 + NUM_LIMBS + 4 + 4 + 5 + MAX_TX * NUM_LIMBS + MAX_TX + 1 + 16 + NUM_CARRIES * SUM_CARRY_BITS;
 
 const HASH_COLS_START: usize = TX_COLS_START + MAX_TX * COLS_PER_TX;
 const HASH_TOTAL: usize =
@@ -84,7 +84,8 @@ impl FrameworkEval for TimeWindowEval {
     fn evaluate<E: EvalAtRow>(&self, mut eval: E) -> E {
         let window_start = eval.next_trace_mask();
         let window_end = eval.next_trace_mask();
-        let claimed_total_limbs: [E::F; NUM_LIMBS] = core::array::from_fn(|_| eval.next_trace_mask());
+        let claimed_total_limbs: [E::F; NUM_LIMBS] =
+            core::array::from_fn(|_| eval.next_trace_mask());
         let pub_cred_root: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
         let pub_cred_null: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
         let epoch = eval.next_trace_mask();
@@ -96,10 +97,14 @@ impl FrameworkEval for TimeWindowEval {
         let mut amount_limbs: [[E::F; NUM_LIMBS]; MAX_TX] =
             core::array::from_fn(|_| core::array::from_fn(|_| E::F::zero()));
         for i in 0..MAX_TX {
-            for k in 0..NUM_LIMBS { amount_limbs[i][k] = eval.next_trace_mask(); }
+            for k in 0..NUM_LIMBS {
+                amount_limbs[i][k] = eval.next_trace_mask();
+            }
         }
         let mut timestamps: Vec<E::F> = Vec::with_capacity(MAX_TX);
-        for _ in 0..MAX_TX { timestamps.push(eval.next_trace_mask()); }
+        for _ in 0..MAX_TX {
+            timestamps.push(eval.next_trace_mask());
+        }
 
         let two = E::F::one() + E::F::one();
 
@@ -135,10 +140,13 @@ impl FrameworkEval for TimeWindowEval {
         let mut total_sum_limbs: [E::F; NUM_LIMBS] = core::array::from_fn(|_| E::F::zero());
         for i in 0..MAX_TX {
             let in_window = eval.next_trace_mask();
-            let contribution_limbs: [E::F; NUM_LIMBS] = core::array::from_fn(|_| eval.next_trace_mask());
+            let contribution_limbs: [E::F; NUM_LIMBS] =
+                core::array::from_fn(|_| eval.next_trace_mask());
             eval.add_constraint(in_window.clone() * (in_window.clone() - E::F::one()));
             for k in 0..NUM_LIMBS {
-                eval.add_constraint(contribution_limbs[k].clone() - in_window.clone() * amount_limbs[i][k].clone());
+                eval.add_constraint(
+                    contribution_limbs[k].clone() - in_window.clone() * amount_limbs[i][k].clone(),
+                );
             }
 
             let ts_lower = eval.next_trace_mask();
@@ -151,7 +159,9 @@ impl FrameworkEval for TimeWindowEval {
                 pow2 *= two.clone();
             }
             eval.add_constraint(in_window.clone() * (lower_recon - ts_lower.clone()));
-            eval.add_constraint(in_window.clone() * (ts_lower - (timestamps[i].clone() - window_start.clone())));
+            eval.add_constraint(
+                in_window.clone() * (ts_lower - (timestamps[i].clone() - window_start.clone())),
+            );
 
             let ts_upper = eval.next_trace_mask();
             let mut upper_recon = E::F::zero();
@@ -163,7 +173,9 @@ impl FrameworkEval for TimeWindowEval {
                 pow2 *= two.clone();
             }
             eval.add_constraint(in_window.clone() * (upper_recon - ts_upper.clone()));
-            eval.add_constraint(in_window * (ts_upper - (window_end.clone() - timestamps[i].clone())));
+            eval.add_constraint(
+                in_window * (ts_upper - (window_end.clone() - timestamps[i].clone())),
+            );
 
             for k in 0..NUM_LIMBS {
                 total_sum_limbs[k] = total_sum_limbs[k].clone() + contribution_limbs[k].clone();
@@ -181,20 +193,45 @@ impl FrameworkEval for TimeWindowEval {
         }
 
         // Hash constraints
-        let owner_out = poseidon2_air::constrain_hash2(&mut eval, sk, E::F::zero(), poseidon2::DOMAIN_OWNER);
-        let issuer_id_out = poseidon2_air::constrain_hash2(&mut eval, cred_issuer, E::F::zero(), poseidon2::DOMAIN_ISSUER_ID);
-        let cm_inputs: Vec<E::F> = vec![
-            issuer_id_out[0].clone(), issuer_id_out[1].clone(), issuer_id_out[2].clone(), issuer_id_out[3].clone(),
-            owner_out[0].clone(), owner_out[1].clone(), owner_out[2].clone(), owner_out[3].clone(),
-            cred_expiry.clone(), cred_secret.clone(),
-        ];
-        let cm_out = poseidon2_air::constrain_sponge_2block(&mut eval, &cm_inputs, poseidon2::DOMAIN_CRED_CM);
-        let crednull_out = poseidon2_air::constrain_hash_many_7(
-            &mut eval, cred_secret,
-            cm_out[0].clone(), cm_out[1].clone(), cm_out[2].clone(), cm_out[3].clone(),
-            epoch, E::F::zero(), poseidon2::DOMAIN_CRED_NULL,
+        let owner_out =
+            poseidon2_air::constrain_hash2(&mut eval, sk, E::F::zero(), poseidon2::DOMAIN_OWNER);
+        let issuer_id_out = poseidon2_air::constrain_hash2(
+            &mut eval,
+            cred_issuer,
+            E::F::zero(),
+            poseidon2::DOMAIN_ISSUER_ID,
         );
-        for j in 0..4 { eval.add_constraint(pub_cred_null[j].clone() - crednull_out[j].clone()); }
+        let cm_inputs: Vec<E::F> = vec![
+            issuer_id_out[0].clone(),
+            issuer_id_out[1].clone(),
+            issuer_id_out[2].clone(),
+            issuer_id_out[3].clone(),
+            owner_out[0].clone(),
+            owner_out[1].clone(),
+            owner_out[2].clone(),
+            owner_out[3].clone(),
+            cred_expiry.clone(),
+            cred_secret.clone(),
+        ];
+        let cm_out = poseidon2_air::constrain_sponge_2block(
+            &mut eval,
+            &cm_inputs,
+            poseidon2::DOMAIN_CRED_CM,
+        );
+        let crednull_out = poseidon2_air::constrain_hash_many_7(
+            &mut eval,
+            cred_secret,
+            cm_out[0].clone(),
+            cm_out[1].clone(),
+            cm_out[2].clone(),
+            cm_out[3].clone(),
+            epoch,
+            E::F::zero(),
+            poseidon2::DOMAIN_CRED_NULL,
+        );
+        for j in 0..4 {
+            eval.add_constraint(pub_cred_null[j].clone() - crednull_out[j].clone());
+        }
 
         let mut current = cm_out;
         for _ in 0..MERKLE_DEPTH {
@@ -203,12 +240,24 @@ impl FrameworkEval for TimeWindowEval {
             let left: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
             eval.add_constraint(direction.clone() * (direction.clone() - E::F::one()));
             for j in 0..4 {
-                eval.add_constraint(left[j].clone() - current[j].clone() - direction.clone() * (sibling[j].clone() - current[j].clone()));
+                eval.add_constraint(
+                    left[j].clone()
+                        - current[j].clone()
+                        - direction.clone() * (sibling[j].clone() - current[j].clone()),
+                );
             }
-            let right: [E::F; 4] = core::array::from_fn(|j| current[j].clone() + sibling[j].clone() - left[j].clone());
-            current = poseidon2_air::constrain_hash_pair(&mut eval, left, right, poseidon2::DOMAIN_MERKLE);
+            let right: [E::F; 4] =
+                core::array::from_fn(|j| current[j].clone() + sibling[j].clone() - left[j].clone());
+            current = poseidon2_air::constrain_hash_pair(
+                &mut eval,
+                left,
+                right,
+                poseidon2::DOMAIN_MERKLE,
+            );
         }
-        for j in 0..4 { eval.add_constraint(current[j].clone() - pub_cred_root[j].clone()); }
+        for j in 0..4 {
+            eval.add_constraint(current[j].clone() - pub_cred_root[j].clone());
+        }
 
         eval
     }
@@ -230,8 +279,12 @@ impl TimeWindowPublicData {
         channel.mix_u64(self.window_start as u64);
         channel.mix_u64(self.window_end as u64);
         channel.mix_u64(self.claimed_total);
-        for &v in &self.cred_root { channel.mix_u64(v as u64); }
-        for &v in &self.cred_null { channel.mix_u64(v as u64); }
+        for &v in &self.cred_root {
+            channel.mix_u64(v as u64);
+        }
+        for &v in &self.cred_null {
+            channel.mix_u64(v as u64);
+        }
         channel.mix_u64(self.epoch as u64);
     }
 }
@@ -263,17 +316,30 @@ pub fn prove_time_window(witness: &TimeWindowWitness) -> Result<AuditProofResult
         }
     }
     if actual_total != witness.claimed_total {
-        return Err(format!("Claimed total {} does not match actual total {} for the window", witness.claimed_total, actual_total));
+        return Err(format!(
+            "Claimed total {} does not match actual total {} for the window",
+            witness.claimed_total, actual_total
+        ));
     }
 
     let sk = M31::from(witness.sk);
     let owner = poseidon2::derive_owner(sk);
     let issuer_id = poseidon2::derive_issuer_id(M31::from(witness.cred_issuer));
-    let cred_cm = poseidon2::credential_commitment(issuer_id, owner, M31::from(witness.cred_expiry), M31::from(witness.cred_secret));
-    let cred_null = poseidon2::credential_nullifier(M31::from(witness.cred_secret), cred_cm, M31::from(witness.epoch));
+    let cred_cm = poseidon2::credential_commitment(
+        issuer_id,
+        owner,
+        M31::from(witness.cred_expiry),
+        M31::from(witness.cred_secret),
+    );
+    let cred_null = poseidon2::credential_nullifier(
+        M31::from(witness.cred_secret),
+        cred_cm,
+        M31::from(witness.epoch),
+    );
 
     let cred_root = poseidon2::u32_array_to_hashout(witness.cred_root);
-    let cred_path: Vec<(poseidon2::HashOut, u32)> = witness.cred_path.iter().map(|&(s, d)| (poseidon2::u32_array_to_hashout(s), d)).collect();
+    let cred_path: Vec<(poseidon2::HashOut, u32)> =
+        witness.cred_path.iter().map(|&(s, d)| (poseidon2::u32_array_to_hashout(s), d)).collect();
     if !poseidon2::verify_merkle_path(cred_cm, &cred_path, cred_root) {
         return Err("Credential root mismatch".to_string());
     }
@@ -288,9 +354,12 @@ pub fn prove_time_window(witness: &TimeWindowWitness) -> Result<AuditProofResult
     for i in 0..MAX_TX {
         tx_limbs[i] = amount_to_limbs(witness.tx_amounts[i]);
         let ts = witness.tx_timestamps[i];
-        in_window_flags[i] = i < witness.tx_count && ts >= witness.window_start && ts <= witness.window_end;
+        in_window_flags[i] =
+            i < witness.tx_count && ts >= witness.window_start && ts <= witness.window_end;
         if in_window_flags[i] {
-            for k in 0..NUM_LIMBS { contrib_limb_sums[k] += u64::from(tx_limbs[i][k]); }
+            for k in 0..NUM_LIMBS {
+                contrib_limb_sums[k] += u64::from(tx_limbs[i][k]);
+            }
         }
     }
     let mut carry_vals = [0u32; NUM_CARRIES];
@@ -303,62 +372,139 @@ pub fn prove_time_window(witness: &TimeWindowWitness) -> Result<AuditProofResult
     let mut cols: Vec<BaseColumn> = (0..NUM_COLS).map(|_| BaseColumn::zeros(num_rows)).collect();
     let expiry_diff_val = witness.cred_expiry - witness.epoch - 1;
     let mut expiry_bits = [M31::from(0u32); 16];
-    for b in 0..16 { expiry_bits[b] = M31::from((expiry_diff_val >> b) & 1); }
+    for b in 0..16 {
+        expiry_bits[b] = M31::from((expiry_diff_val >> b) & 1);
+    }
 
-    let owner_hash_cols = poseidon2_air::gen_hash2_intermediates(sk, M31::from(0u32), poseidon2::DOMAIN_OWNER);
-    let issuer_id_hash_cols = poseidon2_air::gen_hash2_intermediates(M31::from(witness.cred_issuer), M31::from(0u32), poseidon2::DOMAIN_ISSUER_ID);
-    let cm_sponge_inputs: Vec<M31> = vec![issuer_id[0], issuer_id[1], issuer_id[2], issuer_id[3], owner[0], owner[1], owner[2], owner[3], M31::from(witness.cred_expiry), M31::from(witness.cred_secret)];
-    let cm_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(&cm_sponge_inputs, poseidon2::DOMAIN_CRED_CM);
-    let crednull_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(M31::from(witness.cred_secret), cred_cm[0], cred_cm[1], cred_cm[2], cred_cm[3], M31::from(witness.epoch), M31::from(0u32), poseidon2::DOMAIN_CRED_NULL);
+    let owner_hash_cols =
+        poseidon2_air::gen_hash2_intermediates(sk, M31::from(0u32), poseidon2::DOMAIN_OWNER);
+    let issuer_id_hash_cols = poseidon2_air::gen_hash2_intermediates(
+        M31::from(witness.cred_issuer),
+        M31::from(0u32),
+        poseidon2::DOMAIN_ISSUER_ID,
+    );
+    let cm_sponge_inputs: Vec<M31> = vec![
+        issuer_id[0],
+        issuer_id[1],
+        issuer_id[2],
+        issuer_id[3],
+        owner[0],
+        owner[1],
+        owner[2],
+        owner[3],
+        M31::from(witness.cred_expiry),
+        M31::from(witness.cred_secret),
+    ];
+    let cm_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
+        &cm_sponge_inputs,
+        poseidon2::DOMAIN_CRED_CM,
+    );
+    let crednull_hash_cols = poseidon2_air::gen_hash_many_7_intermediates(
+        M31::from(witness.cred_secret),
+        cred_cm[0],
+        cred_cm[1],
+        cred_cm[2],
+        cred_cm[3],
+        M31::from(witness.epoch),
+        M31::from(0u32),
+        poseidon2::DOMAIN_CRED_NULL,
+    );
     let merkle_data = gen_cred_merkle_trace(cred_cm, &witness.cred_path);
     let cred_root_arr = poseidon2::hashout_to_u32_array(cred_root);
     let cred_null_arr = poseidon2::hashout_to_u32_array(cred_null);
 
     for r in 0..num_rows {
         let mut c = 0usize;
-        cols[c].set(r, M31::from(witness.window_start)); c += 1;
-        cols[c].set(r, M31::from(witness.window_end)); c += 1;
-        for k in 0..NUM_LIMBS { cols[c].set(r, M31::from(ct_limbs[k])); c += 1; }
-        for j in 0..4 { cols[c].set(r, M31::from(cred_root_arr[j])); c += 1; }
-        for j in 0..4 { cols[c].set(r, M31::from(cred_null_arr[j])); c += 1; }
-        cols[c].set(r, M31::from(witness.epoch)); c += 1;
-        cols[c].set(r, sk); c += 1;
-        cols[c].set(r, M31::from(witness.cred_issuer)); c += 1;
-        cols[c].set(r, M31::from(witness.cred_expiry)); c += 1;
-        cols[c].set(r, M31::from(witness.cred_secret)); c += 1;
-        for i in 0..MAX_TX { for k in 0..NUM_LIMBS { cols[c].set(r, M31::from(tx_limbs[i][k])); c += 1; } }
-        for i in 0..MAX_TX { cols[c + i].set(r, M31::from(witness.tx_timestamps[i])); }
+        cols[c].set(r, M31::from(witness.window_start));
+        c += 1;
+        cols[c].set(r, M31::from(witness.window_end));
+        c += 1;
+        for k in 0..NUM_LIMBS {
+            cols[c].set(r, M31::from(ct_limbs[k]));
+            c += 1;
+        }
+        for j in 0..4 {
+            cols[c].set(r, M31::from(cred_root_arr[j]));
+            c += 1;
+        }
+        for j in 0..4 {
+            cols[c].set(r, M31::from(cred_null_arr[j]));
+            c += 1;
+        }
+        cols[c].set(r, M31::from(witness.epoch));
+        c += 1;
+        cols[c].set(r, sk);
+        c += 1;
+        cols[c].set(r, M31::from(witness.cred_issuer));
+        c += 1;
+        cols[c].set(r, M31::from(witness.cred_expiry));
+        c += 1;
+        cols[c].set(r, M31::from(witness.cred_secret));
+        c += 1;
+        for i in 0..MAX_TX {
+            for k in 0..NUM_LIMBS {
+                cols[c].set(r, M31::from(tx_limbs[i][k]));
+                c += 1;
+            }
+        }
+        for i in 0..MAX_TX {
+            cols[c + i].set(r, M31::from(witness.tx_timestamps[i]));
+        }
         c += MAX_TX;
-        cols[c].set(r, M31::from(expiry_diff_val)); c += 1;
-        for b in 0..16 { cols[c + b].set(r, expiry_bits[b]); }
+        cols[c].set(r, M31::from(expiry_diff_val));
+        c += 1;
+        for b in 0..16 {
+            cols[c + b].set(r, expiry_bits[b]);
+        }
         c += 16;
-        for k in 0..NUM_CARRIES { for b in 0..SUM_CARRY_BITS { cols[c].set(r, M31::from((carry_vals[k] >> b) & 1)); c += 1; } }
+        for k in 0..NUM_CARRIES {
+            for b in 0..SUM_CARRY_BITS {
+                cols[c].set(r, M31::from((carry_vals[k] >> b) & 1));
+                c += 1;
+            }
+        }
         debug_assert_eq!(c, TX_COLS_START);
 
         for i in 0..MAX_TX {
             let base = TX_COLS_START + i * COLS_PER_TX;
             let in_window = if in_window_flags[i] { 1u32 } else { 0u32 };
             cols[base].set(r, M31::from(in_window));
-            for k in 0..NUM_LIMBS { cols[base + 1 + k].set(r, M31::from(in_window * tx_limbs[i][k])); }
+            for k in 0..NUM_LIMBS {
+                cols[base + 1 + k].set(r, M31::from(in_window * tx_limbs[i][k]));
+            }
             let ts_offset = base + 1 + NUM_LIMBS;
             let ts = witness.tx_timestamps[i];
             let ts_lower = if in_window == 1 { ts - witness.window_start } else { 0 };
             let ts_upper = if in_window == 1 { witness.window_end - ts } else { 0 };
             cols[ts_offset].set(r, M31::from(ts_lower));
-            for b in 0..RANGE_BITS { cols[ts_offset + 1 + b].set(r, M31::from((ts_lower >> b) & 1)); }
+            for b in 0..RANGE_BITS {
+                cols[ts_offset + 1 + b].set(r, M31::from((ts_lower >> b) & 1));
+            }
             cols[ts_offset + 1 + RANGE_BITS].set(r, M31::from(ts_upper));
-            for b in 0..RANGE_BITS { cols[ts_offset + 1 + RANGE_BITS + 1 + b].set(r, M31::from((ts_upper >> b) & 1)); }
+            for b in 0..RANGE_BITS {
+                cols[ts_offset + 1 + RANGE_BITS + 1 + b].set(r, M31::from((ts_upper >> b) & 1));
+            }
         }
 
         let mut h = HASH_COLS_START;
-        for j in 0..owner_hash_cols.len() { cols[h + j].set(r, owner_hash_cols[j]); }
+        for j in 0..owner_hash_cols.len() {
+            cols[h + j].set(r, owner_hash_cols[j]);
+        }
         h += owner_hash_cols.len();
-        for j in 0..issuer_id_hash_cols.len() { cols[h + j].set(r, issuer_id_hash_cols[j]); }
+        for j in 0..issuer_id_hash_cols.len() {
+            cols[h + j].set(r, issuer_id_hash_cols[j]);
+        }
         h += issuer_id_hash_cols.len();
-        for j in 0..cm_hash_cols.len() { cols[h + j].set(r, cm_hash_cols[j]); }
+        for j in 0..cm_hash_cols.len() {
+            cols[h + j].set(r, cm_hash_cols[j]);
+        }
         h += cm_hash_cols.len();
-        for j in 0..crednull_hash_cols.len() { cols[h + j].set(r, crednull_hash_cols[j]); }
-        for j in 0..merkle_data.len() { cols[MERKLE_START + j].set(r, merkle_data[j]); }
+        for j in 0..crednull_hash_cols.len() {
+            cols[h + j].set(r, crednull_hash_cols[j]);
+        }
+        for j in 0..merkle_data.len() {
+            cols[MERKLE_START + j].set(r, merkle_data[j]);
+        }
     }
 
     let domain = CanonicCoset::new(log_num_rows).circle_domain();
@@ -366,18 +512,25 @@ pub fn prove_time_window(witness: &TimeWindowWitness) -> Result<AuditProofResult
         cols.into_iter().map(|col| CircleEvaluation::new(domain, col)).collect();
 
     let public_data = TimeWindowPublicData {
-        window_start: witness.window_start, window_end: witness.window_end,
-        claimed_total: witness.claimed_total, cred_root: witness.cred_root,
-        cred_null: cred_null_arr, epoch: witness.epoch,
+        window_start: witness.window_start,
+        window_end: witness.window_end,
+        claimed_total: witness.claimed_total,
+        cred_root: witness.cred_root,
+        cred_null: cred_null_arr,
+        epoch: witness.epoch,
     };
 
     let config = pcs_config();
     let twiddles = SimdBackend::precompute_twiddles(
-        CanonicCoset::new(log_num_rows + LOG_CONSTRAINT_EVAL_BLOWUP_FACTOR + config.fri_config.log_blowup_factor)
-            .circle_domain().half_coset,
+        CanonicCoset::new(
+            log_num_rows + LOG_CONSTRAINT_EVAL_BLOWUP_FACTOR + config.fri_config.log_blowup_factor,
+        )
+        .circle_domain()
+        .half_coset,
     );
     let channel = &mut ProverChannel::default();
-    let mut commitment_scheme = CommitmentSchemeProver::<SimdBackend, ProverMerkleChannel>::new(config, &twiddles);
+    let mut commitment_scheme =
+        CommitmentSchemeProver::<SimdBackend, ProverMerkleChannel>::new(config, &twiddles);
     let mut tree_builder = commitment_scheme.tree_builder();
     tree_builder.extend_evals(vec![]);
     tree_builder.commit(channel);
@@ -412,16 +565,25 @@ pub fn verify_time_window(result: &AuditProofResult) -> Result<(), String> {
         .map_err(|e| format!("Time-window verification failed: {e:?}"))
 }
 
-fn gen_cred_merkle_trace(leaf: poseidon2::HashOut, path: &[([u32; 4], u32); MERKLE_DEPTH]) -> Vec<M31> {
+fn gen_cred_merkle_trace(
+    leaf: poseidon2::HashOut,
+    path: &[([u32; 4], u32); MERKLE_DEPTH],
+) -> Vec<M31> {
     let mut result = Vec::with_capacity(MERKLE_DEPTH * MERKLE_LEVEL_COLS);
     let mut current = leaf;
     for &(sibling_arr, direction_val) in path.iter() {
         let sibling = poseidon2::u32_array_to_hashout(sibling_arr);
-        let (left, right) = if direction_val == 0 { (current, sibling) } else { (sibling, current) };
-        for j in 0..4 { result.push(sibling[j]); }
+        let (left, right) =
+            if direction_val == 0 { (current, sibling) } else { (sibling, current) };
+        for j in 0..4 {
+            result.push(sibling[j]);
+        }
         result.push(M31::from(direction_val));
-        for j in 0..4 { result.push(left[j]); }
-        let hash_cols = poseidon2_air::gen_hash_pair_intermediates(left, right, poseidon2::DOMAIN_MERKLE);
+        for j in 0..4 {
+            result.push(left[j]);
+        }
+        let hash_cols =
+            poseidon2_air::gen_hash_pair_intermediates(left, right, poseidon2::DOMAIN_MERKLE);
         result.extend_from_slice(&hash_cols);
         current = poseidon2::merkle_hash(left, right);
     }
@@ -436,26 +598,46 @@ mod tests {
         let sk = M31::from(12345u32);
         let owner = poseidon2::derive_owner(sk);
         let issuer_id = poseidon2::derive_issuer_id(M31::from(1u32));
-        let cred_cm = poseidon2::credential_commitment(issuer_id, owner, M31::from(2000u32), M31::from(777u32));
+        let cred_cm = poseidon2::credential_commitment(
+            issuer_id,
+            owner,
+            M31::from(2000u32),
+            M31::from(777u32),
+        );
         let mut cred_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
         cred_tree.set_leaf(0, cred_cm);
         let cred_root = cred_tree.root();
         let path_vec = cred_tree.path(0);
         let mut cred_path = [([0u32; 4], 0u32); MERKLE_DEPTH];
-        for i in 0..MERKLE_DEPTH { cred_path[i] = (poseidon2::hashout_to_u32_array(path_vec[i].0), path_vec[i].1); }
+        for i in 0..MERKLE_DEPTH {
+            cred_path[i] = (poseidon2::hashout_to_u32_array(path_vec[i].0), path_vec[i].1);
+        }
 
         let mut amounts = [0u64; MAX_TX];
         let mut timestamps = [0u32; MAX_TX];
-        amounts[0] = 50000; timestamps[0] = 100;
-        amounts[1] = 30000; timestamps[1] = 200;
-        amounts[2] = 20000; timestamps[2] = 300;
-        amounts[3] = 10000; timestamps[3] = 400;
+        amounts[0] = 50000;
+        timestamps[0] = 100;
+        amounts[1] = 30000;
+        timestamps[1] = 200;
+        amounts[2] = 20000;
+        timestamps[2] = 300;
+        amounts[3] = 10000;
+        timestamps[3] = 400;
 
         TimeWindowWitness {
-            window_start: 50, window_end: 500, claimed_total: 110000,
-            cred_root: poseidon2::hashout_to_u32_array(cred_root), epoch: 1000,
-            tx_amounts: amounts, tx_timestamps: timestamps, tx_count: 4,
-            sk: 12345, cred_issuer: 1, cred_expiry: 2000, cred_secret: 777, cred_path,
+            window_start: 50,
+            window_end: 500,
+            claimed_total: 110000,
+            cred_root: poseidon2::hashout_to_u32_array(cred_root),
+            epoch: 1000,
+            tx_amounts: amounts,
+            tx_timestamps: timestamps,
+            tx_count: 4,
+            sk: 12345,
+            cred_issuer: 1,
+            cred_expiry: 2000,
+            cred_secret: 777,
+            cred_path,
         }
     }
 
