@@ -1,11 +1,10 @@
-# Benchmark Report - April 12, 2026
+# Benchmark Report - April 13, 2026
 
-This report keeps the original filename for continuity, but the measurements below were refreshed on April 12, 2026.
+This report keeps the original filename for continuity. Measurements refreshed April 13, 2026.
 
 **Hardware:** AMD Ryzen 9, release build
 **Prover:** Stwo (FRI-based STARK, Mersenne31)
 **Iterations:** 10 per circuit
-**Mode:** Single-threaded, no batching, no recursion
 **Field:** Mersenne31 (M31)
 **Merkle depth:** 20
 
@@ -21,24 +20,59 @@ This report keeps the original filename for continuity, but the measurements bel
 
 ---
 
-## Measured
+## Measured: Browser (WASM)
+
+The live demo at demo.hushnetwork.io runs the full prover in Chrome via WebAssembly. WASM uses Blake2s for the Merkle commitment backend (no SIMD Poseidon252 in browser).
+
+| Circuit | Prove (avg) |
+|---|---|
+| Payment (2-in-2-out) | ~334ms |
+
+Payment amount does not affect proving time due to fixed-width trace layout.
+
+---
+
+## Measured: Native (single-threaded)
 
 Results from `cargo run --bin bench --release`:
 
 | Circuit | Prove (avg) | Prove (min) | Prove (max) | Verify (avg) |
 |---|---|---|---|---|
-| Payment (2-in-2-out) | 1058ms | 1021ms | 1092ms | 128ms |
-| Mode A Bundle (same-asset fee) | 1152ms | 1121ms | 1182ms | 125ms |
-| Mode B Bundle (HUSH sidecar) | 1826ms | 1781ms | 1872ms | 205ms |
-| Credential Issuance | 281ms | 270ms | 289ms | (combined) |
-| Time-Window Audit (16 slots) | 324ms | 316ms | 344ms | (combined) |
-| Accounting Accept | 0.57us | 0.20us | 2.60us | (state) |
-| Epoch Accrual | 2.61us | 1.80us | 9.00us | (state) |
-| Payout Generation | 0.21us | 0.00us | 1.20us | (state) |
+| Payment (2-in-2-out) | 1010ms | 960ms | 1057ms | 124ms |
+| Mode A Bundle (same-asset fee) | 1089ms | 1035ms | 1123ms | 123ms |
+| Mode B Bundle (HUSH sidecar) | 1763ms | 1666ms | 1852ms | 201ms |
+| Credential Issuance | 269ms | 265ms | 273ms | (combined) |
+| Time-Window Audit (16 slots) | 283ms | 275ms | 297ms | (combined) |
+| Accounting Accept | 2.63us | 0.20us | 23.70us | (state) |
+| Epoch Accrual | 3.26us | 1.30us | 19.60us | (state) |
+| Payout Generation | 0.25us | 0.00us | 1.50us | (state) |
 
-Mode B / Mode A bundle prove ratio: 1.58x | verify ratio: 1.64x
+Mode B / Mode A bundle prove ratio: 1.62x | verify ratio: 1.63x
 
-Payment prove increased ~25% from the April 2 baseline (847ms to 1058ms). This is consistent with the additional 238 trace columns (range check bits for multi-limb amounts and carry decomposition) plus the current bundle and accounting path.
+---
+
+## Measured: Native (parallel)
+
+Results from `cargo run --bin bench --release --features parallel` (rayon multi-threading):
+
+| Circuit | Prove (avg) | Prove (min) | Prove (max) | Verify (avg) |
+|---|---|---|---|---|
+| Payment (2-in-2-out) | 593ms | 513ms | 651ms | 124ms |
+| Mode A Bundle (same-asset fee) | 682ms | 657ms | 715ms | 123ms |
+| Mode B Bundle (HUSH sidecar) | 1087ms | 1014ms | 1167ms | 202ms |
+| Credential Issuance | 145ms | 142ms | 148ms | (combined) |
+| Time-Window Audit (16 slots) | 138ms | 133ms | 154ms | (combined) |
+| Accounting Accept | 0.79us | 0.20us | 4.50us | (state) |
+| Epoch Accrual | 3.68us | 2.40us | 13.40us | (state) |
+| Payout Generation | 0.22us | 0.00us | 1.00us | (state) |
+
+Mode B / Mode A bundle prove ratio: 1.59x | verify ratio: 1.65x
+
+Parallel speedup: ~1.7x on payment proving (1010ms to 593ms). The `parallel` feature enables rayon via stwo's internal parallelization. WASM builds cannot use this feature (no thread support).
+
+---
+
+Payment prove increased ~25% from the April 2 baseline (847ms to 1010ms single-threaded). This is consistent with the additional 238 trace columns (range check bits for multi-limb amounts and carry decomposition) plus the current bundle and accounting path.
 
 ---
 
@@ -85,7 +119,6 @@ Not yet measurable. Requires components that are not built yet.
 
 ## Not measured / not implemented
 
-- Browser WASM prove/verify times (WASM build refreshed, not re-benchmarked in browser)
 - Consensus throughput
 - Block finality
 - Mixed-asset fee routing economics
@@ -99,8 +132,8 @@ Not yet measurable. Requires components that are not built yet.
 
 ## Context
 
-Payment circuit prove time at 1058ms native single-threaded is a credible baseline for a full STARK proof over a ~44,400-column trace with three depth-20 Merkle paths and nine Poseidon2 hash traces. The increase from the previous 847ms baseline reflects the cost of multi-limb amount encoding (300 range check columns, 6 carry bit columns) plus the current bundle path.
+Payment circuit prove time at 1010ms native single-threaded (593ms parallel) is a credible baseline for a full STARK proof over a ~44,400-column trace with three depth-20 Merkle paths and nine Poseidon2 hash traces. Browser WASM proving at ~334ms benefits from Blake2s as the commitment backend, which avoids the Poseidon252 overhead used in native builds.
 
-Mode A bundles (same-asset fee) add moderate overhead beyond the payment proof while accounting and epoch operations still run in microseconds. Mode B bundles (HUSH sidecar) require a second proof for the fee sidecar circuit (~30,000 columns), producing the 1.58x prove ratio.
+Mode A bundles (same-asset fee) add moderate overhead beyond the payment proof while accounting and epoch operations still run in microseconds. Mode B bundles (HUSH sidecar) require a second proof for the fee sidecar circuit (~30,000 columns), producing the ~1.6x prove ratio.
 
 The path to production throughput runs through recursive proof aggregation: one STARK proof per block covering all transactions. That is a design target, not a measured result.

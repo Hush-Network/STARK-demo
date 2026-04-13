@@ -82,21 +82,45 @@ Public outputs bound via Fiat-Shamir: nullifiers, output commitments, credential
 
 ## Performance
 
-Measured on AMD Ryzen 9 / release build. 10 iterations per circuit. Single-threaded, no batching, no recursion.
+### Browser (WASM)
+
+The live demo at demo.hushnetwork.io runs the full prover in the browser via WebAssembly. Measured in Chrome on AMD Ryzen 9:
+
+| Circuit             | Prove (avg) |
+|---------------------|-------------|
+| Payment             |      ~334ms |
+
+WASM uses Blake2s for the Merkle commitment backend (no SIMD Poseidon252 in browser). Payment amount does not affect proving time due to fixed-width trace layout.
+
+### Native (single-threaded)
+
+AMD Ryzen 9, release build. 10 iterations per circuit.
 
 | Circuit             | Prove (avg) | Prove (min) | Prove (max) | Verify (avg) |
 |---------------------|-------------|-------------|-------------|--------------|
-| Payment             |     1058ms  |     1021ms  |     1092ms  |       128ms  |
-| Mode A Bundle       |     1152ms  |     1121ms  |     1182ms  |       125ms  |
-| Mode B Bundle       |     1826ms  |     1781ms  |     1872ms  |       205ms  |
-| Credential Issuance |      281ms  |      270ms  |      289ms  |   (combined) |
-| Time-Window Audit   |      324ms  |      316ms  |      344ms  |   (combined) |
+| Payment             |     1010ms  |      960ms  |     1057ms  |       124ms  |
+| Mode A Bundle       |     1089ms  |     1035ms  |     1123ms  |       123ms  |
+| Mode B Bundle       |     1763ms  |     1666ms  |     1852ms  |       201ms  |
+| Credential Issuance |      269ms  |      265ms  |      273ms  |   (combined) |
+| Time-Window Audit   |      283ms  |      275ms  |      297ms  |   (combined) |
 
-Native: AMD Ryzen 9, release build, April 12 2026. Mode A = same-asset fee. Mode B = HUSH sidecar fee (payment + fee sidecar proofs). Accounting, epoch accrual, and payout generation run in sub-microsecond time and are not shown.
+### Native (parallel, --features parallel)
 
-Recursive batching and multi-threading are target-state optimizations, not measured here. See [benchmarks/](benchmarks/) for the full breakdown.
+Same hardware, multi-threaded via rayon. ~1.7x speedup on payment proving.
 
-Fixed-width amount encoding means payment size does not change the circuit shape within the supported amount range. That is why the current browser demo can already say something meaningful about large-value payment latency even before batching or recursion is implemented.
+| Circuit             | Prove (avg) | Prove (min) | Prove (max) | Verify (avg) |
+|---------------------|-------------|-------------|-------------|--------------|
+| Payment             |      593ms  |      513ms  |      651ms  |       124ms  |
+| Mode A Bundle       |      682ms  |      657ms  |      715ms  |       123ms  |
+| Mode B Bundle       |     1087ms  |     1014ms  |     1167ms  |       202ms  |
+| Credential Issuance |      145ms  |      142ms  |      148ms  |   (combined) |
+| Time-Window Audit   |      138ms  |      133ms  |      154ms  |   (combined) |
+
+Mode A = same-asset fee. Mode B = HUSH sidecar fee (payment + fee sidecar proofs). Accounting, epoch accrual, and payout generation run in sub-microsecond time and are not shown. April 13, 2026.
+
+Recursive batching is a target-state optimization, not measured here. See [benchmarks/](benchmarks/) for the full breakdown.
+
+Fixed-width amount encoding means payment size does not change the circuit shape within the supported amount range. That is why the browser demo can say something meaningful about large-value payment latency even before batching or recursion is implemented.
 
 ## Tests
 
@@ -139,23 +163,31 @@ src/
 docs/
   architecture.md         Circuit architecture and proving notes
 benchmarks/
-  BENCHMARK_REPORT_2026-04-07.md  Latest benchmark run with measured, inferred, and target sections (refreshed April 12, 2026)
+  BENCHMARK_REPORT_2026-04-07.md  Latest benchmark run: WASM, native, and parallel results
   BENCHMARK_REPORT_2026-04-02.md  Previous baseline (pre-multi-limb)
 ```
 
 ## Development
 
 ```bash
-scripts/test.sh     # run tests (113 tests)
-scripts/bench.sh    # benchmarks
-scripts/fmt.sh      # format
+cargo run --bin lifecycle --release                   # full protocol flow
+cargo run --bin bench --release                       # benchmarks (single-threaded)
+cargo run --bin bench --release --features parallel   # benchmarks (multi-threaded)
+cargo test
+cargo fmt -- --check
 cargo clippy -- -D warnings
 ```
 
+### WASM build
+
 ```bash
-cargo run --bin lifecycle --release   # full protocol flow demo
-cargo run --bin bench --release       # performance benchmarks
+wasm-pack build --target web --out-dir web/pkg
+cd web && npm ci && npx vite build
 ```
+
+### CI
+
+Push to `main` triggers fmt, clippy, test, audit, wasm-build, and web-build jobs. Cloudflare Pages deploys the web build automatically on push.
 
 ## Scope notes
 
@@ -167,7 +199,7 @@ This crate is the proving engine for Hush Network. It does not implement:
 - Note discovery
 - Consumer wallet flows beyond the browser demo
 
-See [docs/architecture.md](docs/architecture.md) for circuit architecture notes and [benchmarks/BENCHMARK_REPORT_2026-04-07.md](benchmarks/BENCHMARK_REPORT_2026-04-07.md) for the measured versus target breakdown. That report was refreshed with a new local run on April 12, 2026.
+See [docs/architecture.md](docs/architecture.md) for circuit architecture notes and [benchmarks/BENCHMARK_REPORT_2026-04-07.md](benchmarks/BENCHMARK_REPORT_2026-04-07.md) for the full breakdown including WASM, single-threaded, and parallel native results.
 
 ## Prior art
 
