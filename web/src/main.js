@@ -310,9 +310,9 @@ function credentialDescription() {
 }
 
 function credentialStatusLabel() {
-  if (state.credentialStatus === 'revoked') return 'Credential revoked';
-  if (state.credentialStatus === 'expired') return 'Credential expired';
-  return 'Credential current';
+  if (state.credentialStatus === 'revoked') return 'Revoked';
+  if (state.credentialStatus === 'expired') return 'Expired';
+  return 'Verified';
 }
 
 function renderReviewItems(level) {
@@ -503,21 +503,21 @@ function renderActivity() {
         if (item.kind === 'audit') {
           return `
             <div class="ledger-row ledger-row-audit">
-              <span class="ledger-main">Audit summary</span>
-              <span>${esc(item.copy.split('|')[1]?.trim() || '--')}</span>
-              <span>Window proof</span>
-              <span>${esc(relativeTime(item.time))}</span>
-              <button class="ledger-action" onclick="renderAuditResult(); document.getElementById('audit-overlay').classList.add('show')">Open</button>
+              <span class="ledger-main ledger-counterparty">Audit summary</span>
+              <span class="ledger-amount">${esc(item.copy.split('|')[1]?.trim() || '--')}</span>
+              <span class="ledger-route">Window proof</span>
+              <span class="ledger-time">${esc(relativeTime(item.time))}</span>
+              <button class="ledger-action ledger-action-cell" onclick="renderAuditResult(); document.getElementById('audit-overlay').classList.add('show')">Open</button>
             </div>
           `;
         }
         return `
           <div class="ledger-row">
-            <span class="ledger-main">${esc(item.recipient || 'Counterparty')}</span>
-            <span>${esc(fmtMoney(item.amount))} ${esc(item.asset)}</span>
-            <span>${esc(item.feeAsset)}</span>
-            <span>${esc(relativeTime(item.time))}</span>
-            <button class="ledger-action" onclick="showReceipt('${esc(item.id)}')">Receipt</button>
+            <span class="ledger-main ledger-counterparty">${esc(item.recipient || 'Counterparty')}</span>
+            <span class="ledger-amount">${esc(fmtMoney(item.amount))} ${esc(item.asset)}</span>
+            <span class="ledger-route">${esc(item.feeAsset)}</span>
+            <span class="ledger-time">${esc(relativeTime(item.time))}</span>
+            <button class="ledger-action ledger-action-cell" onclick="showReceipt('${esc(item.id)}')">Receipt</button>
           </div>
         `;
       }).join('')}
@@ -691,87 +691,70 @@ function refreshSendSummary() {
 
 function renderStage() {
   const balanceLabel = `$${fmtMoney(currentBalance())}`;
+  const balanceSizeClass = balanceLabel.length > 15 ? 'compact' : balanceLabel.length > 12 ? 'tight' : '';
   const latestTx = state.successTxId ? getTransaction(state.successTxId) : null;
+  const quote = currentQuote();
+  const feeRouteLabel = state.feeMode === 'hush' ? 'HUSH sidecar' : 'Same asset';
+  const routeArrowLabel = state.feeMode === 'hush' ? `${state.activeAsset} -> HUSH` : `${state.activeAsset} -> ${state.activeAsset}`;
+  const latestProof = state.timings ? `${state.timings.prove.toFixed(0)}ms` : 'Not run yet';
+  const credentialLabel = credentialStatusLabel();
 
   return `
-    <section class="experience-shell">
-      <div class="experience-head">
-        <div class="experience-copy">
-          <h1 class="experience-title">Private stablecoin payments</h1>
-          <div class="experience-subtitle">Browser demo for Hush Network.</div>
-        </div>
-        <div class="experience-actions">
-          <button class="button-secondary" onclick="openTruthModal()">Technical details</button>
-          <a class="button-link" href="/verify.html">Verify receipt</a>
-        </div>
-      </div>
-
-      <section class="dashboard-grid">
-        <div class="dashboard-column dashboard-left">
-          <div class="wallet-card wallet-summary-card" id="wallet-balance-card">
-            <div class="wallet-accent"></div>
-            <div class="summary-topline">
-              <div class="summary-label">Available balance</div>
-              <div class="summary-status-inline">
-                <div class="status-pill">${credentialStatusLabel()}</div>
-                ${state.feeMode === 'hush' ? `<div class="summary-chip">HUSH ${fmtAssetValue(currentHushBalance())}</div>` : ''}
-              </div>
+    <section class="desk-shell">
+      <div class="desk-grid">
+        <aside class="account-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Available balance</h2>
             </div>
-            <div class="balance-amount" title="${balanceLabel}">${balanceLabel}</div>
-            <div class="asset-tabs">
-              <button class="asset-tab ${state.activeAsset === 'USDC' ? 'active' : ''}" onclick="switchAsset('USDC')">USDC</button>
-              <button class="asset-tab ${state.activeAsset === 'USDT' ? 'active' : ''}" onclick="switchAsset('USDT')">USDT</button>
-            </div>
-            <div class="summary-strip">
-              <div class="summary-tile">
-                <span>Fee route</span>
-                <strong>${state.feeMode === 'hush' ? 'HUSH sidecar' : 'Same asset'}</strong>
-              </div>
-              <div class="summary-tile">
-                <span>Last proof</span>
-                <strong>${state.timings ? `${state.timings.prove.toFixed(0)}ms` : 'Not run yet'}</strong>
-              </div>
+            <div class="panel-head-actions">
+              <div class="status-pill ${state.credentialStatus === 'valid' ? 'good' : state.credentialStatus === 'expired' ? 'warn' : 'bad'}">${credentialLabel}</div>
+              ${state.feeMode === 'hush' ? `<div class="panel-side-balance">HUSH ${fmtAssetValue(currentHushBalance())}</div>` : ''}
             </div>
           </div>
-
-          <div class="wallet-card action-card">
-            <div class="mini-head">
-              <div>
-                <div class="summary-label">${latestTx ? 'Latest payment' : 'Receipt tools'}</div>
-                <h3>${latestTx ? 'Receipt and audit actions' : 'Open a receipt after the first send'}</h3>
-              </div>
-            </div>
+          <div class="balance-display ${balanceSizeClass}" title="${balanceLabel}">${balanceLabel}</div>
+          <div class="asset-tabs desk-tabs">
+            <button class="asset-tab ${state.activeAsset === 'USDC' ? 'active' : ''}" onclick="switchAsset('USDC')">USDC</button>
+            <button class="asset-tab ${state.activeAsset === 'USDT' ? 'active' : ''}" onclick="switchAsset('USDT')">USDT</button>
+          </div>
+          <div class="account-meta">
+            <div><span>Fee route</span><strong>${feeRouteLabel}</strong></div>
+            <div><span>Last proof</span><strong>${latestProof}</strong></div>
+          </div>
+          <div class="latest-panel">
             ${
               latestTx
                 ? `
-                  <div class="inline-success">
-                    <div class="inline-success-title">${fmtMoney(latestTx.amount)} ${latestTx.asset}</div>
-                    <div class="inline-success-meta">${esc(latestTx.recipient)} | ${relativeTime(latestTx.time)}</div>
-                  </div>
-                  <div class="action-row">
+                  <div class="latest-label">Latest payment</div>
+                  <div class="latest-amount">${fmtMoney(latestTx.amount)} ${latestTx.asset}</div>
+                  <div class="latest-meta">${esc(latestTx.recipient)} | ${relativeTime(latestTx.time)}</div>
+                  <div class="stacked-actions">
                     <button class="button-secondary button-full" onclick="showReceipt('${esc(latestTx.id)}')">Latest receipt</button>
                     <button class="button-secondary button-full" onclick="openAuditModal()">Create audit proof</button>
                     <button class="button-link button-full" onclick="openVerifierFromSuccess('${esc(latestTx.id)}')">Verify receipt</button>
                   </div>
                 `
                 : `
-                  <div class="action-row">
+                  <div class="latest-label">Receipt tools</div>
+                  <div class="latest-empty">Send a payment to generate a receipt and audit trail.</div>
+                  <div class="stacked-actions">
                     <button class="button-secondary button-full" onclick="openAuditModal()" ${state.transactions.length ? '' : 'disabled'}>Create audit proof</button>
                     <a class="button-link button-full" href="/verify.html">Open verifier</a>
                   </div>
                 `
             }
           </div>
-        </div>
+        </aside>
 
-        <div class="dashboard-column dashboard-right">
-          <div class="wallet-card composer-card" id="composer">
-            <div class="composer-head">
+        <div class="work-stack">
+          <section class="payment-panel" id="composer">
+            <div class="panel-head">
               <div>
-                <h3>Compose payment</h3>
+                <h2>Send private payment</h2>
               </div>
+              ${state.timings ? `<div class="panel-stat-inline">${state.timings.prove.toFixed(0)}ms prove</div>` : ''}
             </div>
-            <div class="composer-grid">
+            <div class="payment-grid">
               <div class="composer-form">
                 <div class="field">
                   <label for="recipient-input">Recipient</label>
@@ -788,10 +771,10 @@ function renderStage() {
                   <button class="asset-tab ${currentAmount() === 50000000 ? 'active' : ''}" onclick="setAmountPreset('50,000,000.00')">$50M</button>
                 </div>
                 <div class="field">
-                  <label>Fee route</label>
+                  <label>Fee</label>
                   <div class="asset-tabs composer-route-tabs">
-                    <button class="asset-tab ${state.feeMode === 'same_asset' ? 'active' : ''}" onclick="switchFeeMode('same_asset')">Fee in ${state.activeAsset}</button>
-                    <button class="asset-tab ${state.feeMode === 'hush' ? 'active' : ''}" onclick="switchFeeMode('hush')">Fee in HUSH</button>
+                    <button class="asset-tab ${state.feeMode === 'same_asset' ? 'active' : ''}" onclick="switchFeeMode('same_asset')">Pay in ${state.activeAsset}</button>
+                    <button class="asset-tab ${state.feeMode === 'hush' ? 'active' : ''}" onclick="switchFeeMode('hush')">Pay in HUSH</button>
                   </div>
                 </div>
               </div>
@@ -799,28 +782,26 @@ function renderStage() {
               <div class="quote-panel">
                 <div class="quote-list">
                   <div class="quote-row"><span>Payment</span><strong id="summary-amount">${fmtMoney(currentAmount())} ${state.activeAsset}</strong></div>
-                  <div class="quote-row"><span>Fee</span><strong id="summary-fee">--</strong></div>
-                  <div class="quote-row"><span>Total debit</span><strong id="summary-total">${currentTotalLabel()}</strong></div>
-                  <div class="quote-row"><span>Route</span><strong id="summary-route">${state.feeMode === 'hush' ? `${state.activeAsset} -> HUSH` : `${state.activeAsset} -> ${state.activeAsset}`}</strong></div>
+                  <div class="quote-row"><span>Fee</span><strong id="summary-fee">${quote ? `${fmtFee(quote.fee_amount / AMT_SCALE)} ${currentFeeAsset()}` : '--'}</strong></div>
+                  <div class="quote-row"><span>Total debit</span><strong id="summary-total">${currentTotalLabel(quote)}</strong></div>
+                  <div class="quote-row"><span>Route</span><strong id="summary-route">${routeArrowLabel}</strong></div>
                 </div>
                 <button class="button-primary button-full" onclick="sendPayment()" ${canSendCurrentPayment() ? '' : 'disabled'}>${state.isSending ? 'Generating proof...' : 'Send private payment'}</button>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div class="wallet-card activity-table-card" id="activity-card">
-            <div class="mini-head">
+          <section class="ledger-panel" id="activity-card">
+            <div class="panel-head">
               <div>
-                <div class="summary-label">Wallet history</div>
-                <h3>Payments and receipts</h3>
+                <div class="panel-kicker">Ledger</div>
+                <h2>Payments and receipts</h2>
               </div>
             </div>
-            <div class="activity-list">
-              ${renderActivity()}
-            </div>
-          </div>
+            ${renderActivity()}
+          </section>
         </div>
-      </section>
+      </div>
     </section>
   `;
 }
