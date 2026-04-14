@@ -1,10 +1,26 @@
 import init, {
-  dual_fee_review_json,
   dual_fee_quote_payment_with_schedule_json,
   dual_fee_submit_demo_payment_json,
   prove_demo_credential_issuance,
   prove_time_window_audit,
 } from '../pkg/hush_demo_stark.js';
+import {
+  createReceiptId,
+  esc,
+  fmtAssetValue,
+  fmtFee,
+  fmtHash4,
+  fmtMoney,
+  parseAmountInput,
+  relativeTime,
+  sanitizeAmountInput,
+} from './lib/formatters.js';
+import {
+  renderActivity,
+  renderPayoutPreview,
+  renderProofLog,
+  renderProofOutputs,
+} from './lib/renderers.js';
 
 // 1 protocol unit = $0.0001 (4 decimal places). Circuit uses four-limb radix-2^15 encoding
 // with u64 amounts (max ~$115 trillion per note). Display dollars * AMT_SCALE = protocol units.
@@ -15,23 +31,6 @@ const CRED_ISSUER = 1;
 const CRED_EXPIRY = 50_000;
 const CRED_SECRET = 777;
 
-function esc(s) {
-  if (s == null) return '';
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// Format a [u32; 4] array as a 0x-prefixed 32-char hex string (4 x 8 hex digits).
-function fmtHash4(arr) {
-  if (!Array.isArray(arr) || arr.length !== 4) return '0x' + String(arr);
-  return '0x' + arr.map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
-}
-
-const DEFAULT_SETUP_METHOD = 'Device key';
 const DEFAULT_RECIPIENT = 'Meridian Labs';
 const DEFAULT_AMOUNT = '5,000,000.00';
 const INITIAL_BALANCES_UNITS = { USDC: 75_000_000 * AMT_SCALE, USDT: 40_000_000 * AMT_SCALE };
@@ -41,8 +40,6 @@ let wasmReady = false;
 let wasmError = null;
 
 const state = {
-  screen: 'wallet',
-  setupMethod: DEFAULT_SETUP_METHOD,
   credentialStatus: 'valid',
   activeAsset: 'USDC',
   feeMode: 'same_asset',
@@ -58,14 +55,11 @@ const state = {
   proofOutputs: [],
   timings: null,
   isSending: false,
-  isActivatingCredential: false,
   credentialProof: null,
-  reviewSnapshot: null,
   receiptTxId: null,
   successTxId: null,
   auditLoading: false,
   auditResult: null,
-  walletSeeded: false,
   lastSubmission: null,
 };
 
@@ -79,12 +73,6 @@ async function boot() {
   const minimumSplash = new Promise(resolve => setTimeout(resolve, 450));
   await Promise.all([init(), minimumSplash]);
   wasmReady = true;
-  try {
-    const review = parseRuntimeResponse(dual_fee_review_json());
-    state.reviewSnapshot = review.ok ? review.data : null;
-  } catch (error) {
-    console.error('Runtime review snapshot unavailable:', error);
-  }
   try {
     state.credentialProof = prove_demo_credential_issuance(SK, CRED_ISSUER, CRED_EXPIRY, CRED_SECRET);
   } catch (error) {
@@ -106,48 +94,11 @@ function render() {
   stage.innerHTML = renderStage();
   if (rail) rail.innerHTML = '';
   if (truthContent) truthContent.innerHTML = renderTruthOverlayView();
-
-  if (state.screen === 'wallet') {
-    const amountInput = document.getElementById('amount-input');
-    const recipientInput = document.getElementById('recipient-input');
-    if (amountInput) amountInput.value = state.currentAmountInput;
-    if (recipientInput) recipientInput.value = state.currentRecipient;
-    refreshSendSummary();
-  }
-}
-
-function fmtMoney(value) {
-  return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function fmtAssetValue(value) {
-  return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
-}
-
-function fmtFee(value) {
-  return value.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-}
-
-function relativeTime(date) {
-  const diff = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
-function sanitizeAmountInput(raw) {
-  const clean = raw.replace(/[^0-9.]/g, '');
-  const parts = clean.split('.');
-  const whole = parts[0] || '0';
-  const decimals = parts[1] ? parts[1].slice(0, 2) : '';
-  const formattedWhole = Number.parseInt(whole, 10).toLocaleString('en-US');
-  return decimals.length ? `${formattedWhole}.${decimals}` : formattedWhole;
-}
-
-function parseAmountInput(value) {
-  const parsed = Number.parseFloat(value.replace(/,/g, ''));
-  return Number.isFinite(parsed) ? parsed : 0;
+  const amountInput = document.getElementById('amount-input');
+  const recipientInput = document.getElementById('recipient-input');
+  if (amountInput) amountInput.value = state.currentAmountInput;
+  if (recipientInput) recipientInput.value = state.currentRecipient;
+  refreshSendSummary();
 }
 
 function currentAmount() {
@@ -225,16 +176,6 @@ function currentTotalLabel(quote = currentQuote()) {
   return `${fmtAssetValue(currentPaymentDebit(quote))} ${state.activeAsset}`;
 }
 
-function proofStatusPill() {
-  if (wasmError) return 'Browser error';
-  if (!wasmReady) return 'Loading prover';
-  return 'Browser ready';
-}
-
-function lastProofLabel() {
-  return state.timings ? `${state.timings.prove.toFixed(0)}ms prove` : 'No proof yet';
-}
-
 function canSendCurrentPayment() {
   if (!wasmReady || wasmError || state.isSending) return false;
   const recipient = state.currentRecipient.trim();
@@ -244,25 +185,6 @@ function canSendCurrentPayment() {
   if (quote.payment_debit > currentBalanceUnits()) return false;
   if (quote.hush_fee_debit > state.hushBalanceUnits) return false;
   return true;
-}
-
-function _obsolete_refreshSendSummary() {
-  const amount = currentAmount();
-  const quote = currentQuote();
-  const amountEl = document.getElementById('summary-amount');
-  const feeEl = document.getElementById('summary-fee');
-  const totalEl = document.getElementById('summary-total');
-  const routeEl = document.getElementById('summary-route');
-  const exactEl = document.getElementById('summary-delivery');
-  if (amountEl) amountEl.textContent = `${fmtMoney(amount)} ${state.activeAsset}`;
-  if (feeEl) {
-    feeEl.textContent = quote
-      ? `${fmtFee(quote.fee_amount / AMT_SCALE)} ${currentFeeAsset()}`
-      : '--';
-  }
-  if (totalEl) totalEl.textContent = currentTotalLabel(quote);
-  if (routeEl) routeEl.textContent = `${state.feeMode === 'hush' ? `${state.activeAsset} -> HUSH` : `${state.activeAsset} -> ${state.activeAsset}`} · ${currentFeeScheduleLabel()}`;
-  if (exactEl) exactEl.textContent = '';
 }
 
 function parseRuntimeResponse(raw) {
@@ -293,378 +215,14 @@ function resetProofScope() {
   state.proofLog = [makeLog('info', 'Waiting for the first payment proof.')];
 }
 
-function seedWalletActivity() {
-  if (state.walletSeeded) return;
-  state.activity = [];
-  state.walletSeeded = true;
-}
-
-function credentialDescription() {
-  if (state.credentialStatus === 'revoked') {
-    return 'The demo wallet blocks the payment before proving because the issuer registry marks the credential as revoked.';
-  }
-  if (state.credentialStatus === 'expired') {
-    return 'Expiry is enforced inside the payment proof. The wallet can try to send, but the proof will fail.';
-  }
-  return 'The wallet can generate a payment proof because the credential is current and passes the required check for private sends.';
-}
-
 function credentialStatusLabel() {
   if (state.credentialStatus === 'revoked') return 'Revoked';
   if (state.credentialStatus === 'expired') return 'Expired';
   return 'Verified';
 }
 
-function renderReviewItems(level) {
-  const items = state.reviewSnapshot?.items?.filter((item) => item.level === level) || [];
-  if (!items.length) {
-    return '<div class="rail-item"><strong>Status unavailable</strong></div>';
-  }
-
-  return items.map((item) => `
-    <div class="rail-item ${level === 'supported' ? 'rail-item-real' : level === 'represented_only' ? 'rail-item-local' : ''}">
-      <strong>${esc(item.label)}</strong>
-    </div>
-  `).join('');
-}
-
-function createReceiptId() {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
-}
-
 function currentAssetTransactions() {
   return state.transactions.filter((tx) => tx.asset === state.activeAsset);
-}
-
-function _obsolete_renderStage() {
-  const balanceLabel = `$${fmtMoney(currentBalance())}`;
-  const latestTx = state.successTxId ? getTransaction(state.successTxId) : null;
-  return `
-    <section class="experience-shell">
-      <div class="experience-head">
-        <div class="experience-copy">
-          <h1 class="experience-title">Private stablecoin payments</h1>
-          <div class="experience-subtitle">Browser demo for Hush Network.</div>
-        </div>
-        <div class="experience-actions">
-          <button class="button-secondary" onclick="openTruthModal()">Technical details</button>
-          <a class="button-link" href="/verify.html">Verify receipt</a>
-        </div>
-      </div>
-
-      <section class="dashboard-grid">
-        <div class="dashboard-column dashboard-left">
-          <div class="wallet-card wallet-summary-card" id="wallet-balance-card">
-            <div class="wallet-accent"></div>
-            <div class="summary-topline">
-              <div class="summary-label">Available balance</div>
-              <div class="summary-status-inline">
-                <div class="status-pill">${credentialStatusLabel()}</div>
-                ${state.feeMode === 'hush' ? `<div class="summary-chip">HUSH ${fmtAssetValue(currentHushBalance())}</div>` : ''}
-              </div>
-            </div>
-            <div class="balance-amount">${balanceLabel}</div>
-            <div class="asset-tabs">
-              <button class="asset-tab ${state.activeAsset === 'USDC' ? 'active' : ''}" onclick="switchAsset('USDC')">USDC</button>
-              <button class="asset-tab ${state.activeAsset === 'USDT' ? 'active' : ''}" onclick="switchAsset('USDT')">USDT</button>
-            </div>
-            <div class="summary-strip">
-              <div class="summary-tile">
-                <span>Fee route</span>
-                <strong>${state.feeMode === 'hush' ? 'HUSH sidecar' : 'Same asset'}</strong>
-              </div>
-              <div class="summary-tile">
-                <span>Last proof</span>
-                <strong>${state.timings ? `${state.timings.prove.toFixed(0)}ms` : 'Not run yet'}</strong>
-              </div>
-            </div>
-          </div>
-
-          <div class="wallet-card action-card">
-            <div class="mini-head">
-              <div>
-                <div class="summary-label">${latestTx ? 'Latest payment' : 'Receipt tools'}</div>
-                <h3>${latestTx ? 'Receipt and audit actions' : 'Open a receipt after the first send'}</h3>
-              </div>
-            </div>
-            ${
-              latestTx
-                ? `
-                  <div class="inline-success">
-                    <div class="inline-success-title">${fmtMoney(latestTx.amount)} ${latestTx.asset}</div>
-                    <div class="inline-success-meta">${esc(latestTx.recipient)} · ${relativeTime(latestTx.time)}</div>
-                  </div>
-                  <div class="action-row">
-                    <button class="button-secondary button-full" onclick="showReceipt('${esc(latestTx.id)}')">Latest receipt</button>
-                    <button class="button-secondary button-full" onclick="openAuditModal()">Create audit proof</button>
-                    <button class="button-link button-full" onclick="openVerifierFromSuccess('${esc(latestTx.id)}')">Verify receipt</button>
-                  </div>
-                `
-                : `
-                  <div class="action-row">
-                    <button class="button-secondary button-full" onclick="openAuditModal()" ${state.transactions.length ? '' : 'disabled'}>Create audit proof</button>
-                    <a class="button-link button-full" href="/verify.html">Open verifier</a>
-                  </div>
-                `
-            }
-          </div>
-        </div>
-
-        <div class="dashboard-column dashboard-right">
-          <div class="wallet-card composer-card" id="composer">
-          <div class="composer-head">
-            <div>
-              <div class="summary-label">Private send</div>
-              <h3>Compose payment</h3>
-            </div>
-            ${state.timings ? `<div class="composer-head-note">${state.timings.prove.toFixed(0)}ms last proof</div>` : ''}
-          </div>
-          <div class="composer-grid">
-            <div class="composer-form">
-              <div class="field">
-                <label for="recipient-input">Recipient</label>
-                <input id="recipient-input" type="text" value="${esc(state.currentRecipient)}" placeholder="Recipient name or wallet reference" oninput="updateRecipient(this.value)">
-              </div>
-              <div class="field">
-                <label for="amount-input">Amount</label>
-                <input id="amount-input" type="text" value="${esc(state.currentAmountInput)}" inputmode="decimal" placeholder="0.00" oninput="updateAmount(this.value)">
-              </div>
-              <div class="composer-presets">
-                <button class="asset-tab ${currentAmount() === 250000 ? 'active' : ''}" onclick="setAmountPreset('250,000.00')">$250K</button>
-                <button class="asset-tab ${currentAmount() === 5000000 ? 'active' : ''}" onclick="setAmountPreset('5,000,000.00')">$5M</button>
-                <button class="asset-tab ${currentAmount() === 25000000 ? 'active' : ''}" onclick="setAmountPreset('25,000,000.00')">$25M</button>
-                <button class="asset-tab ${currentAmount() === 50000000 ? 'active' : ''}" onclick="setAmountPreset('50,000,000.00')">$50M</button>
-              </div>
-              <div class="field">
-                <label>Fee route</label>
-                <div class="asset-tabs composer-route-tabs">
-                  <button class="asset-tab ${state.feeMode === 'same_asset' ? 'active' : ''}" onclick="switchFeeMode('same_asset')">Fee in ${state.activeAsset}</button>
-                  <button class="asset-tab ${state.feeMode === 'hush' ? 'active' : ''}" onclick="switchFeeMode('hush')">Fee in HUSH</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="quote-panel">
-            <div class="quote-list">
-              <div class="quote-row"><span>Payment</span><strong id="summary-amount">${fmtMoney(currentAmount())} ${state.activeAsset}</strong></div>
-              <div class="quote-row"><span>Fee</span><strong id="summary-fee">--</strong></div>
-              <div class="quote-row"><span>Total debit</span><strong id="summary-total">${currentTotalLabel()}</strong></div>
-              <div class="quote-row"><span>Route</span><strong id="summary-route">${state.feeMode === 'hush' ? `${state.activeAsset} -> HUSH` : `${state.activeAsset} -> ${state.activeAsset}`}</strong></div>
-            </div>
-              <button class="button-primary button-full" onclick="sendPayment()" ${canSendCurrentPayment() ? '' : 'disabled'}>${state.isSending ? 'Generating proof...' : 'Send private payment'}</button>
-            </div>
-          </div>
-          </div>
-
-          <div class="wallet-card activity-table-card" id="activity-card">
-            <div class="mini-head">
-              <div>
-                <div class="summary-label">Wallet history</div>
-                <h3>Payments and receipts</h3>
-              </div>
-            </div>
-            <div class="activity-list">
-              ${renderActivity()}
-            </div>
-          </div>
-        </div>
-      </section>
-    </section>
-  `;
-}
-
-function renderSetupCard(title, copy) {
-  const active = state.setupMethod === title ? 'active' : '';
-  return `
-    <button class="option-card ${active}" onclick="chooseSetupMethod('${title}')">
-      <div class="option-title">${title}</div>
-      <div class="option-copy">${copy}</div>
-    </button>
-  `;
-}
-
-function renderActivity() {
-  if (!state.activity.length) {
-    return '<div class="empty-copy compact-empty">No payments yet.</div>';
-  }
-
-  return `
-    <div class="ledger-table">
-      <div class="ledger-head">
-        <span>Counterparty</span>
-        <span>Amount</span>
-        <span>Route</span>
-        <span>Time</span>
-        <span>Action</span>
-      </div>
-      ${state.activity.map((item) => {
-        if (item.kind === 'audit') {
-          return `
-            <div class="ledger-row ledger-row-audit">
-              <span class="ledger-main ledger-counterparty">Audit summary</span>
-              <span class="ledger-amount">${esc(item.copy.split('|')[1]?.trim() || '--')}</span>
-              <span class="ledger-route">Window proof</span>
-              <span class="ledger-time">${esc(relativeTime(item.time))}</span>
-              <button class="ledger-action ledger-action-cell" onclick="renderAuditResult(); document.getElementById('audit-overlay').classList.add('show')">Open</button>
-            </div>
-          `;
-        }
-        return `
-          <div class="ledger-row">
-            <span class="ledger-main ledger-counterparty">${esc(item.recipient || 'Counterparty')}</span>
-            <span class="ledger-amount">${esc(fmtMoney(item.amount))} ${esc(item.asset)}</span>
-            <span class="ledger-route">${esc(item.feeAsset)}</span>
-            <span class="ledger-time">${esc(relativeTime(item.time))}</span>
-            <button class="ledger-action ledger-action-cell" onclick="showReceipt('${esc(item.id)}')">Receipt</button>
-          </div>
-        `;
-      }).join('')}
-    </div>
-  `;
-}
-
-function renderRail() {
-  if (state.screen !== 'wallet') {
-    return `
-      <div class="rail-card">
-        <div class="rail-kicker">Guided flow</div>
-        <h3>What this demo is doing</h3>
-        <p>Setup and credential issuance are simulated here so the walkthrough stays focused on the wallet experience.</p>
-        <div class="rail-list">
-          <div class="rail-item"><strong>Wallet direction</strong><span>Stablecoin-first payments, amount plus fee shown up front, receipts only when needed.</span></div>
-          <div class="rail-item"><strong>Verified today</strong><span>Same-asset fee payments, HUSH sidecar fee payments, receipt verification, local accounting, and audit proofs.</span></div>
-          <div class="rail-item"><strong>Still simulated</strong><span>Setup, credential issuance, wallet balances, and the live network path.</span></div>
-        </div>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="rail-card session-card" id="truth-card">
-      <div class="rail-kicker">Proof activity</div>
-      ${state.isSending ? `
-        <div class="proving-live">
-          <span class="proving-dot"></span>
-          <span>Generating STARK proof...</span>
-        </div>
-      ` : state.timings ? `
-        <div class="proof-timing-line">
-          <span>${state.timings.prove.toFixed(0)}ms prove</span>
-          <span class="timing-sep">·</span>
-          <span>${state.timings.verify.toFixed(0)}ms verify</span>
-          <span class="timing-sep">·</span>
-          <span>${state.timings.accounting.toFixed(1)}ms accounting</span>
-        </div>
-      ` : `
-        <div class="session-empty">Send a payment to see the prover run.</div>
-      `}
-      <div class="proof-log-live">
-        ${renderProofLog()}
-      </div>
-      <details class="rail-details">
-        <summary>Credential simulation</summary>
-        <div class="rail-details-body">
-          <p>${credentialDescription()}</p>
-          <div class="sim-controls">
-            <button class="sim-button ${state.credentialStatus === 'valid' ? 'active' : ''}" onclick="setCredentialStatus('valid')">Valid</button>
-            <button class="sim-button ${state.credentialStatus === 'revoked' ? 'active' : ''}" onclick="setCredentialStatus('revoked')">Revoked</button>
-            <button class="sim-button ${state.credentialStatus === 'expired' ? 'active' : ''}" onclick="setCredentialStatus('expired')">Expired</button>
-          </div>
-        </div>
-      </details>
-      <details class="rail-details" ${state.lastSubmission ? 'open' : ''}>
-        <summary>Payout preview</summary>
-        <div class="rail-details-body">
-          ${renderPayoutPreview()}
-        </div>
-      </details>
-    </div>
-  `;
-}
-
-function _obsolete_renderTruthOverlayView() {
-  const hasSessionMetrics = Boolean(state.timings || state.auditResult);
-  const credMetric = state.credentialProof?.prove_time_ms ? `${state.credentialProof.prove_time_ms.toFixed(0)}ms` : '--';
-  const paymentProve = state.timings ? `${state.timings.prove.toFixed(0)}ms` : '--';
-  const paymentVerify = state.timings ? `${state.timings.verify.toFixed(0)}ms` : '--';
-  const auditMetric = state.auditResult ? `${state.auditResult.proveMs.toFixed(0)}ms` : '--';
-  return `
-    <div class="rail-section truth-modal-section">
-      ${hasSessionMetrics ? `
-        <div class="metrics-grid">
-          <div class="metric-card"><span>Payment prove</span><strong>${paymentProve}</strong></div>
-          <div class="metric-card"><span>Payment verify</span><strong>${paymentVerify}</strong></div>
-          <div class="metric-card"><span>Audit proof</span><strong>${auditMetric}</strong></div>
-          <div class="metric-card"><span>Credential proof</span><strong>${credMetric}</strong></div>
-        </div>
-      ` : `
-        <div class="session-empty">No proof run yet.</div>
-      `}
-
-      <div class="rail-card session-card">
-        <div class="truth-block-head">
-          <div class="rail-kicker">Latest proof</div>
-          <a class="truth-modal-link" href="https://github.com/Hush-Network/stark-demo" target="_blank" rel="noreferrer">Public repo</a>
-        </div>
-        ${wasmError ? `
-          <div class="session-empty" style="border-color:rgba(239,68,68,0.35);color:#fca5a5;">WASM failed to load: ${esc(wasmError.message)}</div>
-        ` : state.isSending ? `
-          <div class="proving-live">
-            <span class="proving-dot"></span>
-            <span>Generating STARK proof...</span>
-          </div>
-        ` : state.timings ? `
-          <div class="proof-timing-line">
-            <span>${state.timings.prove.toFixed(0)}ms prove</span>
-            <span class="timing-sep">|</span>
-            <span>${state.timings.verify.toFixed(0)}ms verify</span>
-            <span class="timing-sep">|</span>
-            <span>${state.timings.accounting.toFixed(2)}ms accounting</span>
-          </div>
-        ` : `
-          <div class="session-empty">No payment proof yet.</div>
-        `}
-        ${state.timings ? `
-          <div class="proof-log-live">
-            ${renderProofLog()}
-          </div>
-          <details class="rail-details" ${state.proofOutputs.length ? 'open' : ''}>
-            <summary>Public outputs</summary>
-            <div class="rail-details-body">
-              ${renderProofOutputs()}
-            </div>
-          </details>
-        ` : ''}
-        <details class="rail-details">
-          <summary>Credential</summary>
-          <div class="rail-details-body">
-            ${
-              state.credentialProof
-                ? `<div class="proof-output" style="margin-bottom:12px;">
-                    <div class="proof-output-label">Local proof</div>
-                    <div class="proof-output-value">${state.credentialProof.success ? 'Verified' : 'Failed'}</div>
-                    <div class="proof-output-note">${state.credentialProof.prove_time_ms ? `${state.credentialProof.prove_time_ms.toFixed(0)}ms` : '--'}</div>
-                  </div>`
-                : ''
-            }
-            <div class="sim-controls">
-              <button class="sim-button ${state.credentialStatus === 'valid' ? 'active' : ''}" onclick="setCredentialStatus('valid')">Valid</button>
-              <button class="sim-button ${state.credentialStatus === 'revoked' ? 'active' : ''}" onclick="setCredentialStatus('revoked')">Revoked</button>
-              <button class="sim-button ${state.credentialStatus === 'expired' ? 'active' : ''}" onclick="setCredentialStatus('expired')">Expired</button>
-            </div>
-          </div>
-        </details>
-        <details class="rail-details" ${state.lastSubmission ? 'open' : ''}>
-          <summary>Payout preview</summary>
-          <div class="rail-details-body">
-            ${renderPayoutPreview()}
-          </div>
-        </details>
-      </div>
-    </div>
-  `;
 }
 
 function refreshSendSummary() {
@@ -674,7 +232,6 @@ function refreshSendSummary() {
   const feeEl = document.getElementById('summary-fee');
   const totalEl = document.getElementById('summary-total');
   const routeEl = document.getElementById('summary-route');
-  const exactEl = document.getElementById('summary-delivery');
 
   if (amountEl) amountEl.textContent = `${fmtMoney(amount)} ${state.activeAsset}`;
   if (feeEl) {
@@ -686,7 +243,6 @@ function refreshSendSummary() {
   if (routeEl) {
     routeEl.textContent = `${state.feeMode === 'hush' ? `${state.activeAsset} -> HUSH` : `${state.activeAsset} -> ${state.activeAsset}`} | ${currentFeeScheduleLabel()}`;
   }
-  if (exactEl) exactEl.textContent = '';
 }
 
 function renderStage() {
@@ -798,7 +354,7 @@ function renderStage() {
                 <h2>Payments and receipts</h2>
               </div>
             </div>
-            ${renderActivity()}
+            ${renderActivity(state.activity)}
           </section>
         </div>
       </div>
@@ -842,12 +398,12 @@ function renderTruthOverlayView() {
           </div>
         ` : state.timings ? `
           <div class="proof-log-live">
-            ${renderProofLog()}
+            ${renderProofLog(state.proofLog)}
           </div>
           <details class="rail-details" ${state.proofOutputs.length ? 'open' : ''}>
             <summary>Public outputs</summary>
             <div class="rail-details-body">
-              ${renderProofOutputs()}
+              ${renderProofOutputs(state.proofOutputs)}
             </div>
           </details>
         ` : `
@@ -875,83 +431,13 @@ function renderTruthOverlayView() {
         <details class="rail-details" ${state.lastSubmission ? 'open' : ''}>
           <summary>Payout preview</summary>
           <div class="rail-details-body">
-            ${renderPayoutPreview()}
+            ${renderPayoutPreview(state.lastSubmission, AMT_SCALE)}
           </div>
         </details>
       </div>
     </div>
   `;
 }
-
-function renderProofLog() {
-  return state.proofLog.map((entry) => `
-    <div class="proof-entry ${entry.kind}">
-      <div class="proof-entry-top">
-        <span class="proof-entry-kind">${entry.kind === 'success' ? 'Success' : entry.kind === 'error' ? 'Blocked or failed' : 'Info'}</span>
-        <span class="proof-entry-time">${entry.time}</span>
-      </div>
-      <div class="proof-entry-message">${entry.message}</div>
-    </div>
-  `).join('');
-}
-
-function renderProofOutputs() {
-  if (!state.proofOutputs.length) {
-    return '<p class="empty-copy">No public proof outputs yet.</p>';
-  }
-
-  return state.proofOutputs.map((output) => `
-    <div class="proof-output">
-      <div class="proof-output-label">${output.label}</div>
-      <div class="proof-output-value">${output.value}</div>
-      <div class="proof-output-note">${output.note}</div>
-    </div>
-  `).join('');
-}
-
-function renderPayoutPreview() {
-  const payoutRecords = state.lastSubmission?.payout_inspection?.payout_records || [];
-  if (!payoutRecords.length) {
-    return '<p class="empty-copy compact-empty">No payout records yet.</p>';
-  }
-
-  return payoutRecords.map((record) => `
-    <div class="proof-output">
-      <div class="proof-output-label">Validator ${record.validator_id}</div>
-      <div class="proof-output-value">Key ${record.payout_key}</div>
-      <div class="proof-output-note">HUSH ${fmtFee(record.entitlement.hush / AMT_SCALE)} | USDC ${fmtFee(record.entitlement.usdc / AMT_SCALE)} | USDT ${fmtFee(record.entitlement.usdt / AMT_SCALE)}</div>
-    </div>
-  `).join('');
-}
-
-window.startDemo = function startDemo() {
-  window.scrollToComposer();
-};
-
-window.chooseSetupMethod = function chooseSetupMethod(method) {
-  state.setupMethod = method;
-  render();
-};
-
-window.continueFromSetup = function continueFromSetup() {
-  state.screen = 'credential';
-  render();
-};
-
-window.activateCredential = async function activateCredential() {
-  state.isActivatingCredential = true;
-  render();
-  await new Promise((resolve) => setTimeout(resolve, 900));
-  state.isActivatingCredential = false;
-  state.screen = 'ready';
-  render();
-};
-
-window.openWallet = function openWallet() {
-  state.screen = 'wallet';
-  seedWalletActivity();
-  render();
-};
 
 window.switchAsset = function switchAsset(asset) {
   state.activeAsset = asset;
@@ -987,8 +473,6 @@ window.setCredentialStatus = function setCredentialStatus(status) {
 };
 
 window.restartDemo = function restartDemo() {
-  state.screen = 'wallet';
-  state.setupMethod = DEFAULT_SETUP_METHOD;
   state.credentialStatus = 'valid';
   state.activeAsset = 'USDC';
   state.feeMode = 'same_asset';
@@ -998,33 +482,20 @@ window.restartDemo = function restartDemo() {
   state.hushBalanceUnits = INITIAL_HUSH_BALANCE_UNITS;
   state.activity = [];
   state.transactions = [];
-  state.walletSeeded = false;
   state.receiptTxId = null;
   state.successTxId = null;
   state.auditLoading = false;
   state.auditResult = null;
   state.isSending = false;
-  state.isActivatingCredential = false;
   state.lastSubmission = null;
   resetProofScope();
-  closeOverlay('success-overlay');
   closeOverlay('receipt-overlay');
   closeOverlay('audit-overlay');
   render();
 };
 
-window.scrollToComposer = function scrollToComposer() {
-  const composer = document.getElementById('composer');
-  if (!composer) return;
-  composer.scrollIntoView({ behavior: 'smooth', block: 'start' });
-};
-
 window.scrollToTruth = function scrollToTruth() {
   window.openTruthModal();
-};
-
-window.openVerifier = function openVerifier() {
-  window.open('/verify.html', '_blank');
 };
 
 window.openTruthModal = function openTruthModal() {
@@ -1592,3 +1063,5 @@ function stamp() {
     hour12: false,
   });
 }
+
+
