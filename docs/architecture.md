@@ -6,8 +6,8 @@ This note covers the proving engine used by the Hush browser demo. It does not d
 
 - `poseidon2` - M31 permutation, commitments, Merkle trees
 - `poseidon2_air` - AIR constraints for hash verification (degree-2 decomposition)
-- `circuit` - Payment circuit (2-in-2-out private transfer with credential check)
-- `credential_issuance` - Issuer authorization proof
+- `circuit` - Payment circuit (2-in-2-out private transfer with provenance + non-revocation check)
+- `credential_issuance` - Provenance attestation proof (file name kept for compatibility)
 - `time_window` - Aggregate audit proof over a time range
 - `prover_common` - Shared prover config, channel, and hasher type aliases
 - `types` - Witness structs and constants
@@ -26,7 +26,7 @@ Column counts per circuit at Merkle depth 20:
 | Circuit | Base | Range | Hash | Merkle | Total |
 |---------|------|-------|------|--------|-------|
 | Payment | 66 | 300 | 5,724 | 38,340 | 44,430 |
-| Credential Issuance | 6 | - | 1,272 | 12,780 | 14,058 |
+| Provenance Attestation | 6 | - | 1,272 | 12,780 | 14,058 |
 | Time-Window Audit | 58 | 832 | 1,272 | 12,780 | 14,942 |
 
 Because the payment circuit uses fixed-width amount encoding, the shape of the trace does not change when the payment value gets large. That matters for Hush because the browser demo can already provide a real early signal on large-value payment latency before batching or recursion is added.

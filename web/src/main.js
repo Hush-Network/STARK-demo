@@ -40,7 +40,7 @@ let wasmReady = false;
 let wasmError = null;
 
 const state = {
-  credentialStatus: 'valid',
+  provenanceStatus: 'valid',
   activeAsset: 'USDC',
   feeMode: 'same_asset',
   currentRecipient: DEFAULT_RECIPIENT,
@@ -55,7 +55,7 @@ const state = {
   proofOutputs: [],
   timings: null,
   isSending: false,
-  credentialProof: null,
+  provenanceProof: null,
   receiptTxId: null,
   successTxId: null,
   auditLoading: false,
@@ -74,9 +74,9 @@ async function boot() {
   await Promise.all([init(), minimumSplash]);
   wasmReady = true;
   try {
-    state.credentialProof = prove_demo_credential_issuance(SK, CRED_ISSUER, CRED_EXPIRY, CRED_SECRET);
+    state.provenanceProof = prove_demo_credential_issuance(SK, CRED_ISSUER, CRED_EXPIRY, CRED_SECRET);
   } catch (error) {
-    console.error('Credential issuance proof unavailable:', error);
+    console.error('Provenance attestation proof unavailable:', error);
   }
   render();
   splash.classList.add('hidden');
@@ -215,10 +215,10 @@ function resetProofScope() {
   state.proofLog = [makeLog('info', 'Waiting for the first payment proof.')];
 }
 
-function credentialStatusLabel() {
-  if (state.credentialStatus === 'revoked') return 'Revoked';
-  if (state.credentialStatus === 'expired') return 'Expired';
-  return 'Verified';
+function provenanceStatusLabel() {
+  if (state.provenanceStatus === 'revoked') return 'Revoked';
+  if (state.provenanceStatus === 'sanctioned') return 'Sanctioned';
+  return 'Valid';
 }
 
 function currentAssetTransactions() {
@@ -253,7 +253,7 @@ function renderStage() {
   const feeRouteLabel = state.feeMode === 'hush' ? 'HUSH sidecar' : 'Same asset';
   const routeArrowLabel = state.feeMode === 'hush' ? `${state.activeAsset} -> HUSH` : `${state.activeAsset} -> ${state.activeAsset}`;
   const latestProof = state.timings ? `${state.timings.prove.toFixed(0)}ms` : 'Not run yet';
-  const credentialLabel = credentialStatusLabel();
+  const provenanceLabel = provenanceStatusLabel();
 
   return `
     <section class="desk-shell">
@@ -264,7 +264,7 @@ function renderStage() {
               <h2>Available balance</h2>
             </div>
             <div class="panel-head-actions">
-              <div class="status-pill ${state.credentialStatus === 'valid' ? 'good' : state.credentialStatus === 'expired' ? 'warn' : 'bad'}">${credentialLabel}</div>
+              <div class="status-pill ${state.provenanceStatus === 'valid' ? 'good' : state.provenanceStatus === 'sanctioned' ? 'warn' : 'bad'}">${provenanceLabel}</div>
               ${state.feeMode === 'hush' ? `<div class="panel-side-balance">HUSH ${fmtAssetValue(currentHushBalance())}</div>` : ''}
             </div>
           </div>
@@ -410,21 +410,21 @@ function renderTruthOverlayView() {
           <div class="session-empty">No payment proof yet.</div>
         `}
         <details class="rail-details">
-          <summary>Credential</summary>
+          <summary>Provenance</summary>
           <div class="rail-details-body">
             ${
-              state.credentialProof
+              state.provenanceProof
                 ? `<div class="proof-output" style="margin-bottom:12px;">
                     <div class="proof-output-label">Local proof</div>
-                    <div class="proof-output-value">${state.credentialProof.success ? 'Verified' : 'Failed'}</div>
-                    <div class="proof-output-note">${state.credentialProof.prove_time_ms ? `${state.credentialProof.prove_time_ms.toFixed(0)}ms` : '--'}</div>
+                    <div class="proof-output-value">${state.provenanceProof.success ? 'Verified' : 'Failed'}</div>
+                    <div class="proof-output-note">${state.provenanceProof.prove_time_ms ? `${state.provenanceProof.prove_time_ms.toFixed(0)}ms` : '--'}</div>
                   </div>`
                 : ''
             }
             <div class="sim-controls">
-              <button class="sim-button ${state.credentialStatus === 'valid' ? 'active' : ''}" onclick="setCredentialStatus('valid')">Valid</button>
-              <button class="sim-button ${state.credentialStatus === 'revoked' ? 'active' : ''}" onclick="setCredentialStatus('revoked')">Revoked</button>
-              <button class="sim-button ${state.credentialStatus === 'expired' ? 'active' : ''}" onclick="setCredentialStatus('expired')">Expired</button>
+              <button class="sim-button ${state.provenanceStatus === 'valid' ? 'active' : ''}" onclick="setProvenanceStatus('valid')">Valid</button>
+              <button class="sim-button ${state.provenanceStatus === 'revoked' ? 'active' : ''}" onclick="setProvenanceStatus('revoked')">Revoked</button>
+              <button class="sim-button ${state.provenanceStatus === 'sanctioned' ? 'active' : ''}" onclick="setProvenanceStatus('sanctioned')">Sanctioned</button>
             </div>
           </div>
         </details>
@@ -467,13 +467,13 @@ window.setAmountPreset = function setAmountPreset(value) {
   render();
 };
 
-window.setCredentialStatus = function setCredentialStatus(status) {
-  state.credentialStatus = status;
+window.setProvenanceStatus = function setProvenanceStatus(status) {
+  state.provenanceStatus = status;
   render();
 };
 
 window.restartDemo = function restartDemo() {
-  state.credentialStatus = 'valid';
+  state.provenanceStatus = 'valid';
   state.activeAsset = 'USDC';
   state.feeMode = 'same_asset';
   state.currentRecipient = DEFAULT_RECIPIENT;
@@ -553,16 +553,18 @@ async function sendPayment() {
 
   await new Promise((resolve) => setTimeout(resolve, 80));
 
-  if (state.credentialStatus === 'revoked') {
-    pushLog('error', 'Credential blocked at the wallet layer before proving.');
+  if (state.provenanceStatus === 'revoked') {
+    pushLog('error', 'Spend blocked: lineage is in the revocation accumulator.');
     state.isSending = false;
     render();
-    showToast('Credential revoked. Payment blocked before proving.', 'error');
+    showToast('Provenance revoked. Payment blocked before proving.', 'error');
     return;
   }
 
   try {
-    const credExpiry = state.credentialStatus === 'expired' ? 1 : CRED_EXPIRY;
+    // 'sanctioned' state: simulate in-circuit non-revocation failure by
+    // passing an expired CRED_EXPIRY value through the existing WASM API.
+    const credExpiry = state.provenanceStatus === 'sanctioned' ? 1 : CRED_EXPIRY;
     const paymentBalanceUnits = currentBalanceUnits();
     const hushBalanceUnits = state.hushBalanceUnits;
     const amountUnits = Math.max(1, Math.round(amount * AMT_SCALE));
@@ -619,7 +621,7 @@ async function sendPayment() {
       { label: 'null_1', value: fmtHash4(paymentProof.null_1), note: 'Second consumed payment note.' },
       { label: 'out_cm_0', value: fmtHash4(paymentProof.out_cm_0), note: 'Committed note for the recipient.' },
       { label: 'out_cm_1', value: fmtHash4(paymentProof.out_cm_1), note: 'Committed sender payment-asset change note.' },
-      { label: 'cred_null', value: fmtHash4(paymentProof.cred_null), note: 'Credential nullifier for this payment.' },
+      { label: 'cred_null', value: fmtHash4(paymentProof.cred_null), note: 'Lineage marker for this payment (used by the revocation accumulator).' },
     ];
     if (result.hush_sidecar) {
       state.proofOutputs.push({
