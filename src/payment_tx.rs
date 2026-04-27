@@ -146,13 +146,14 @@ pub struct PaymentTxV1 {
 pub struct PaymentMerkleContext {
     pub epoch: u32,
     pub note_root: [u32; 4],
-    pub cred_root: [u32; 4],
-    pub cred_issuer: u32,
-    pub cred_expiry: u32,
-    pub cred_secret: u32,
+    /// Provenance revocation accumulator root (mixed into proof channel for binding).
+    pub accumulator_root: [u32; 4],
+    /// Attestation root bound to input note 0. All-zeros = unregulated.
+    pub att_root_0: [u32; 4],
+    /// Attestation root bound to input note 1. All-zeros = unregulated.
+    pub att_root_1: [u32; 4],
     pub note_path_0: [([u32; 4], u32); MERKLE_DEPTH],
     pub note_path_1: [([u32; 4], u32); MERKLE_DEPTH],
-    pub cred_path: [([u32; 4], u32); MERKLE_DEPTH],
 }
 
 #[derive(Clone, Debug)]
@@ -327,7 +328,6 @@ impl PaymentTxV1 {
         Ok(PaymentWitness {
             epoch: context.epoch,
             note_root: context.note_root,
-            cred_root: context.cred_root,
             sk,
             in_asset: self.descriptor.payment_asset,
             in_amt_0: self.inputs[0].amount,
@@ -347,12 +347,11 @@ impl PaymentTxV1 {
             replay_domain: self.descriptor.replay_domain,
             tx_binding_hash: self.tx_binding_hash,
             sender_binding_tag: self.attachment.sender_binding_tag,
-            cred_issuer: context.cred_issuer,
-            cred_expiry: context.cred_expiry,
-            cred_secret: context.cred_secret,
+            att_root_0: context.att_root_0,
+            att_root_1: context.att_root_1,
+            pub_accumulator_root: context.accumulator_root,
             note_path_0: context.note_path_0,
             note_path_1: context.note_path_1,
-            cred_path: context.cred_path,
         })
     }
 
@@ -414,15 +413,17 @@ pub fn payment_route(payment_asset: u32, fee_asset: u32) -> Result<PaymentRoute,
     let payment_asset = AssetId::try_from_u32(payment_asset)?;
     let fee_asset = AssetId::try_from_u32(fee_asset)?;
     match (payment_asset, fee_asset) {
-        (AssetId::Usdc, AssetId::Usdc) | (AssetId::Usdt, AssetId::Usdt) => {
-            Ok(PaymentRoute::SameAsset)
-        }
+        (AssetId::Usdc, AssetId::Usdc)
+        | (AssetId::Usdt, AssetId::Usdt)
+        | (AssetId::Hush, AssetId::Hush) => Ok(PaymentRoute::SameAsset),
         (AssetId::Usdc, AssetId::Hush) | (AssetId::Usdt, AssetId::Hush) => {
             Ok(PaymentRoute::HushSidecar)
         }
-        (AssetId::Hush, _) => Err("HUSH is not a valid payment asset for PaymentTxV1".to_string()),
-        (AssetId::Usdc, AssetId::Usdt) | (AssetId::Usdt, AssetId::Usdc) => Err(format!(
-            "cross-stablecoin fee mismatch is invalid: payment asset {} with fee asset {}",
+        (AssetId::Usdc, AssetId::Usdt)
+        | (AssetId::Usdt, AssetId::Usdc)
+        | (AssetId::Hush, AssetId::Usdc)
+        | (AssetId::Hush, AssetId::Usdt) => Err(format!(
+            "cross-asset fee mismatch is invalid: payment asset {} with fee asset {}",
             payment_asset.as_u32(),
             fee_asset.as_u32()
         )),

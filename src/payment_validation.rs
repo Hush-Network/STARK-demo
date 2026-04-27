@@ -188,10 +188,10 @@ mod tests {
         let mut fixture = valid_usdc_same_asset_fixture();
         fixture.tx.descriptor.fee_asset = AssetId::Usdt as u32;
         let err = match prove_payment_bundle(&fixture.tx, &fixture.witness, None) {
-            Ok(_) => panic!("cross-stable mismatch should be rejected"),
+            Ok(_) => panic!("cross-asset mismatch should be rejected"),
             Err(err) => err,
         };
-        assert!(err.contains("cross-stablecoin"));
+        assert!(err.contains("cross-asset"));
     }
 
     #[test]

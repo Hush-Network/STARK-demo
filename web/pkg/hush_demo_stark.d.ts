@@ -35,8 +35,7 @@ export class ProofOutput {
     private constructor();
     free(): void;
     [Symbol.dispose](): void;
-    readonly cred_null: string;
-    readonly cred_root: string;
+    readonly accumulator_root: string;
     readonly epoch: number;
     readonly log_num_rows: number;
     readonly message: string;
@@ -56,7 +55,7 @@ export class ProofOutput {
  * computes randomness, builds Merkle trees and paths internally, proves and verifies.
  * Returns a ProofOutput including proof_bytes for independent verification.
  */
-export function build_witness_and_prove(epoch: number, sk: number, in_asset: number, in_amt_0: number, in_amt_1: number, out_amt_0: number, out_owner_0: Uint32Array, out_amt_1: number, cred_issuer: number, cred_expiry: number, cred_secret: number): ProofOutput;
+export function build_witness_and_prove(epoch: number, sk: number, in_asset: number, in_amt_0: number, in_amt_1: number, out_amt_0: number, out_owner_0: Uint32Array, out_amt_1: number): ProofOutput;
 
 export function compute_credential_root(sk: number, issuer: number, expiry: number, secret: number): Uint32Array;
 
@@ -72,7 +71,7 @@ export function dual_fee_review_json(): string;
 
 export function dual_fee_submit_demo_payment_json(payment_asset: number, fee_asset: number, amount: number, fee_schedule_version: number, recipient_owner: number, payment_balance: number, hush_balance: number, credential_expiry: number): string;
 
-export function prove_and_verify(epoch: number, note_root: Uint32Array, cred_root: Uint32Array, sk: number, in_asset: number, in_amt_0: number, in_rand_0: number, in_amt_1: number, in_rand_1: number, out_amt_0: number, out_owner_0: Uint32Array, out_rand_0: number, out_amt_1: number, out_rand_1: number, cred_issuer: number, cred_expiry: number, cred_secret: number, note_path_0_flat: Uint32Array, note_path_1_flat: Uint32Array, cred_path_flat: Uint32Array): ProofOutput;
+export function prove_and_verify(epoch: number, note_root: Uint32Array, sk: number, in_asset: number, in_amt_0: number, in_rand_0: number, in_amt_1: number, in_rand_1: number, out_amt_0: number, out_owner_0: Uint32Array, out_rand_0: number, out_amt_1: number, out_rand_1: number, note_path_0_flat: Uint32Array, note_path_1_flat: Uint32Array): ProofOutput;
 
 export function prove_demo_credential_issuance(sk: number, issuer_key: number, expiry: number, secret: number): CredentialIssuanceOutput;
 
@@ -104,7 +103,7 @@ export function verify_audit_proof(proof_b64: string, window_start: number, wind
  *   use different trace sizes. The prover returns this value in ProofOutput.
  * Returns a JS string: "ok" on success, error message on failure.
  */
-export function verify_serialized_proof(proof_b64: string, note_root: Uint32Array, cred_root: Uint32Array, epoch: number, null_0: Uint32Array, null_1: Uint32Array, out_cm_0: Uint32Array, out_cm_1: Uint32Array, cred_null: Uint32Array, tx_binding_hash: Uint32Array, sender_binding_tag: Uint32Array, log_num_rows: number): string;
+export function verify_serialized_proof(proof_b64: string, note_root: Uint32Array, accumulator_root: Uint32Array, epoch: number, null_0: Uint32Array, null_1: Uint32Array, out_cm_0: Uint32Array, out_cm_1: Uint32Array, tx_binding_hash: Uint32Array, sender_binding_tag: Uint32Array, log_num_rows: number): string;
 
 export function wasm_init(): void;
 
@@ -122,10 +121,9 @@ export interface InitOutput {
     readonly proofoutput_null_1: (a: number, b: number) => void;
     readonly proofoutput_out_cm_0: (a: number, b: number) => void;
     readonly proofoutput_out_cm_1: (a: number, b: number) => void;
-    readonly proofoutput_cred_null: (a: number, b: number) => void;
     readonly proofoutput_proof_bytes: (a: number, b: number) => void;
     readonly proofoutput_note_root: (a: number, b: number) => void;
-    readonly proofoutput_cred_root: (a: number, b: number) => void;
+    readonly proofoutput_accumulator_root: (a: number, b: number) => void;
     readonly proofoutput_epoch: (a: number) => number;
     readonly proofoutput_log_num_rows: (a: number) => number;
     readonly dual_fee_review_json: (a: number) => void;
@@ -133,7 +131,7 @@ export interface InitOutput {
     readonly dual_fee_quote_payment_json: (a: number, b: number, c: number, d: number) => void;
     readonly dual_fee_quote_payment_with_schedule_json: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly dual_fee_submit_demo_payment_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly prove_and_verify: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number, x: number, y: number, z: number) => number;
+    readonly prove_and_verify: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number) => number;
     readonly __wbg_auditoutput_free: (a: number, b: number) => void;
     readonly auditoutput_success: (a: number) => number;
     readonly auditoutput_message: (a: number, b: number) => void;
@@ -154,8 +152,8 @@ export interface InitOutput {
     readonly prove_demo_credential_issuance: (a: number, b: number, c: number, d: number) => number;
     readonly prove_time_window_audit: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => number;
     readonly verify_audit_proof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
-    readonly build_witness_and_prove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => number;
-    readonly verify_serialized_proof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number, v: number, w: number) => void;
+    readonly build_witness_and_prove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
+    readonly verify_serialized_proof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number) => void;
     readonly compute_credential_root: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly compute_note_root: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly compute_merkle_path: (a: number, b: number, c: number, d: number) => void;

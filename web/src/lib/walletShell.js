@@ -236,16 +236,15 @@ export function renderBalanceCard(state, opts = {}) {
 // ---------- BalancesTable ----------
 
 const ASSET_DEFS = [
-  { sym: 'USDT', name: 'Tether USD',   glyph: '$',                                                clickable: true,  hint: 'switchAsset' },
-  { sym: 'USDC', name: 'USD Coin',     glyph: '$',                                                clickable: true,  hint: 'switchAsset' },
-  { sym: 'EURC', name: 'Euro Coin',    glyph: '€',                                                clickable: false, hint: 'comingSoon' },
-  { sym: 'HUSH', name: 'Hush Network', glyph: '<img src="/images/hushlogo.png" alt="HUSH" class="asset-logo">', clickable: false, hint: 'comingSoon' },
+  { sym: 'USDT', name: 'Tether USD',   glyph: '$',                                                                          clickable: true },
+  { sym: 'USDC', name: 'USD Coin',     glyph: '$',                                                                          clickable: true },
+  { sym: 'HUSH', name: 'Hush Network', glyph: '<img src="/images/hushlogo.png" alt="HUSH" class="asset-logo">',             clickable: true },
 ];
 
 export function renderBalancesTable(state, balanceFor) {
   const rows = ASSET_DEFS.map((asset) => {
     const isActive = state.activeAsset === asset.sym;
-    const balanceLabel = balanceFor(asset.sym);
+    const row = balanceFor(asset.sym);
     const onclick = asset.clickable
       ? `onclick="switchAsset('${asset.sym}')"`
       : `onclick="askComingSoon('${asset.sym}')"`;
@@ -255,14 +254,12 @@ export function renderBalancesTable(state, balanceFor) {
           <div class="asset-bubble">${asset.glyph}</div>
           <div class="asset-name">
             <div class="nm">${asset.name}</div>
-            <div class="sm">${asset.sym}</div>
           </div>
         </div>
-        <div class="asset-bal">
-          <span class="num">${balanceLabel.balance}</span>
-          <span class="sym"> ${asset.sym}</span>
+        <div class="asset-right">
+          <div class="asset-val">${row.value}</div>
+          <div class="asset-bal"><span class="num">${row.balance}</span> <span class="sym">${asset.sym}</span></div>
         </div>
-        <div class="asset-val">${balanceLabel.value}</div>
       </li>
     `;
   }).join('');
@@ -273,12 +270,6 @@ export function renderBalancesTable(state, balanceFor) {
         <button class="tab active" onclick="setBalancesTab('balances')">Balances</button>
         <button class="tab" onclick="setActiveView('activity')">Activity</button>
         <button class="tab" onclick="setActiveView('contacts')">Contacts</button>
-      </div>
-
-      <div class="asset-head">
-        <span>Asset</span>
-        <span class="r">Balance</span>
-        <span class="r">Value</span>
       </div>
 
       <ul class="asset-list">${rows}</ul>

@@ -49,10 +49,6 @@ const DEFAULT_AMOUNT = '500.00';
 const INITIAL_BALANCES_UNITS = { USDC: 2_000 * AMT_SCALE, USDT: 1_000 * AMT_SCALE };
 // 1,284.32 HUSH * AMT_SCALE (1284.32 -> 12,843,200 protocol units)
 const INITIAL_HUSH_BALANCE_UNITS = 12_843_200;
-// Cosmetic display values for non-proving asset rows (EURC and HUSH).
-// These do not affect the proving stack; they are only included in the
-// headline-balance calculation so the asset list rows visibly sum.
-const COSMETIC_USD_VALUE = { EURC: 762, HUSH: 85.50 };
 
 let wasmReady = false;
 let wasmError = null;
@@ -104,18 +100,21 @@ const tweaksEl = document.getElementById('tweaks');
 const composerOverlayEl = document.getElementById('composer-overlay');
 const truthContent = document.getElementById('truth-content');
 
-// Display values for the wallet asset list. The headline total balance and
-// the per-asset balance/value strings are intentionally cosmetic; the proving
-// stack uses state.balancesUnits / state.hushBalanceUnits internally for
-// quote and fee logic regardless of what these display rows show.
-const ASSET_DISPLAY = {
-  USDT: { balance: '1,000.00', value: '$1,000.00' },
-  USDC: { balance: '2,000.00', value: '$2,000.00' },
-  EURC: { balance: '700.00',   value: '$762.00' },
-  HUSH: { balance: '1,284.32', value: '$85.50' },
-};
+// HUSH spot-price assumption for the BalanceCard / asset list display only.
+// Picked so the initial 1,284.32 HUSH balance values at $85.50, matching the
+// design reference. The proving stack does not use this number.
+const HUSH_USD_PRICE = 85.50 / 1284.32;
+
 function balanceDisplayFor(sym) {
-  return ASSET_DISPLAY[sym] || { balance: '0.00', value: '$0.00' };
+  if (sym === 'USDT' || sym === 'USDC') {
+    const bal = state.balancesUnits[sym] / AMT_SCALE;
+    return { balance: fmtMoney(bal), value: `$${fmtMoney(bal)}` };
+  }
+  if (sym === 'HUSH') {
+    const bal = state.hushBalanceUnits / AMT_SCALE;
+    return { balance: fmtMoney(bal), value: `$${fmtMoney(bal * HUSH_USD_PRICE)}` };
+  }
+  return { balance: '0.00', value: '$0.00' };
 }
 
 const ACCENT_PRESETS = {
@@ -196,7 +195,13 @@ function assetId(asset) {
 }
 
 function balanceAmountFor(asset) {
+  if (asset === 'HUSH') return state.hushBalanceUnits / AMT_SCALE;
   return state.balancesUnits[asset] / AMT_SCALE;
+}
+
+function balanceUnitsFor(asset) {
+  if (asset === 'HUSH') return state.hushBalanceUnits;
+  return state.balancesUnits[asset];
 }
 
 function currentFeeAsset() {
@@ -208,7 +213,7 @@ function currentBalance() {
 }
 
 function currentBalanceUnits() {
-  return state.balancesUnits[state.activeAsset];
+  return balanceUnitsFor(state.activeAsset);
 }
 
 function currentHushBalance() {
@@ -356,13 +361,14 @@ function renderComposerBody() {
             <div class="asset-tabs">
               <button class="asset-tab ${state.activeAsset === 'USDC' ? 'active' : ''}" onclick="switchAsset('USDC')">USDC</button>
               <button class="asset-tab ${state.activeAsset === 'USDT' ? 'active' : ''}" onclick="switchAsset('USDT')">USDT</button>
+              <button class="asset-tab ${state.activeAsset === 'HUSH' ? 'active' : ''}" onclick="switchAsset('HUSH')">HUSH</button>
             </div>
           </div>
           <div class="field">
             <label>Fee</label>
             <div class="asset-tabs composer-route-tabs">
               <button class="asset-tab ${state.feeMode === 'same_asset' ? 'active' : ''}" onclick="switchFeeMode('same_asset')">Pay in ${state.activeAsset}</button>
-              <button class="asset-tab ${state.feeMode === 'hush' ? 'active' : ''}" onclick="switchFeeMode('hush')">Pay in HUSH</button>
+              ${state.activeAsset === 'HUSH' ? '' : `<button class="asset-tab ${state.feeMode === 'hush' ? 'active' : ''}" onclick="switchFeeMode('hush')">Pay in HUSH</button>`}
             </div>
           </div>
         </div>
@@ -374,7 +380,7 @@ function renderComposerBody() {
             <div class="quote-row"><span>Total debit</span><strong id="summary-total">${currentTotalLabel(quote)}</strong></div>
             <div class="quote-row"><span>Route</span><strong id="summary-route">${routeArrowLabel}</strong></div>
           </div>
-          <button class="button-primary button-full" onclick="sendPayment()" ${canSendCurrentPayment() ? '' : 'disabled'}>${state.isSending ? 'Generating proof...' : 'Send private payment'}</button>
+          <button class="button-primary button-full" onclick="sendPayment()" ${state.isSending ? 'disabled' : ''}>${state.isSending ? 'Generating proof...' : 'Send private payment'}</button>
         </div>
       </div>
     </section>
@@ -384,9 +390,9 @@ function renderComposerBody() {
 function renderStage() {
   switch (state.activeView) {
     case 'wallet': {
-      const realUsd = (state.balancesUnits.USDC + state.balancesUnits.USDT) / AMT_SCALE;
-      const cosmeticUsd = COSMETIC_USD_VALUE.EURC + COSMETIC_USD_VALUE.HUSH;
-      const headline = realUsd + cosmeticUsd;
+      const stablesUsd = (state.balancesUnits.USDC + state.balancesUnits.USDT) / AMT_SCALE;
+      const hushUsd = (state.hushBalanceUnits / AMT_SCALE) * HUSH_USD_PRICE;
+      const headline = stablesUsd + hushUsd;
       return renderBalanceCard(state, { handle: USER_HANDLE, headlineBalance: headline })
         + renderBalancesTable(state, balanceDisplayFor);
     }
@@ -507,6 +513,9 @@ function renderTruthOverlayView() {
 
 window.switchAsset = function switchAsset(asset) {
   state.activeAsset = asset;
+  // HUSH same-asset is the only valid HUSH-payment route; the sidecar mode
+  // would be (Hush, Hush) which is identical, so force same-asset feeMode.
+  if (asset === 'HUSH') state.feeMode = 'same_asset';
   render();
 };
 
@@ -700,7 +709,11 @@ async function sendPayment() {
     }
 
     state.lastSubmission = result;
-    state.balancesUnits[state.activeAsset] -= quote.payment_debit;
+    if (state.activeAsset === 'HUSH') {
+      state.hushBalanceUnits -= quote.payment_debit;
+    } else {
+      state.balancesUnits[state.activeAsset] -= quote.payment_debit;
+    }
     if (quote.hush_fee_debit > 0) {
       state.hushBalanceUnits -= quote.hush_fee_debit;
     }

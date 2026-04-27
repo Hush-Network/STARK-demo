@@ -231,31 +231,12 @@ export class ProofOutput {
     /**
      * @returns {string}
      */
-    get cred_null() {
+    get accumulator_root() {
         let deferred1_0;
         let deferred1_1;
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            wasm.proofoutput_cred_null(retptr, this.__wbg_ptr);
-            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
-            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-            deferred1_0 = r0;
-            deferred1_1 = r1;
-            return getStringFromWasm0(r0, r1);
-        } finally {
-            wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export2(deferred1_0, deferred1_1, 1);
-        }
-    }
-    /**
-     * @returns {string}
-     */
-    get cred_root() {
-        let deferred1_0;
-        let deferred1_1;
-        try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            wasm.proofoutput_cred_root(retptr, this.__wbg_ptr);
+            wasm.proofoutput_accumulator_root(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             deferred1_0 = r0;
@@ -449,15 +430,12 @@ if (Symbol.dispose) ProofOutput.prototype[Symbol.dispose] = ProofOutput.prototyp
  * @param {number} out_amt_0
  * @param {Uint32Array} out_owner_0
  * @param {number} out_amt_1
- * @param {number} cred_issuer
- * @param {number} cred_expiry
- * @param {number} cred_secret
  * @returns {ProofOutput}
  */
-export function build_witness_and_prove(epoch, sk, in_asset, in_amt_0, in_amt_1, out_amt_0, out_owner_0, out_amt_1, cred_issuer, cred_expiry, cred_secret) {
+export function build_witness_and_prove(epoch, sk, in_asset, in_amt_0, in_amt_1, out_amt_0, out_owner_0, out_amt_1) {
     const ptr0 = passArray32ToWasm0(out_owner_0, wasm.__wbindgen_export3);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.build_witness_and_prove(epoch, sk, in_asset, in_amt_0, in_amt_1, out_amt_0, ptr0, len0, out_amt_1, cred_issuer, cred_expiry, cred_secret);
+    const ret = wasm.build_witness_and_prove(epoch, sk, in_asset, in_amt_0, in_amt_1, out_amt_0, ptr0, len0, out_amt_1);
     return ProofOutput.__wrap(ret);
 }
 
@@ -634,7 +612,6 @@ export function dual_fee_submit_demo_payment_json(payment_asset, fee_asset, amou
 /**
  * @param {number} epoch
  * @param {Uint32Array} note_root
- * @param {Uint32Array} cred_root
  * @param {number} sk
  * @param {number} in_asset
  * @param {number} in_amt_0
@@ -646,28 +623,20 @@ export function dual_fee_submit_demo_payment_json(payment_asset, fee_asset, amou
  * @param {number} out_rand_0
  * @param {number} out_amt_1
  * @param {number} out_rand_1
- * @param {number} cred_issuer
- * @param {number} cred_expiry
- * @param {number} cred_secret
  * @param {Uint32Array} note_path_0_flat
  * @param {Uint32Array} note_path_1_flat
- * @param {Uint32Array} cred_path_flat
  * @returns {ProofOutput}
  */
-export function prove_and_verify(epoch, note_root, cred_root, sk, in_asset, in_amt_0, in_rand_0, in_amt_1, in_rand_1, out_amt_0, out_owner_0, out_rand_0, out_amt_1, out_rand_1, cred_issuer, cred_expiry, cred_secret, note_path_0_flat, note_path_1_flat, cred_path_flat) {
+export function prove_and_verify(epoch, note_root, sk, in_asset, in_amt_0, in_rand_0, in_amt_1, in_rand_1, out_amt_0, out_owner_0, out_rand_0, out_amt_1, out_rand_1, note_path_0_flat, note_path_1_flat) {
     const ptr0 = passArray32ToWasm0(note_root, wasm.__wbindgen_export3);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray32ToWasm0(cred_root, wasm.__wbindgen_export3);
+    const ptr1 = passArray32ToWasm0(out_owner_0, wasm.__wbindgen_export3);
     const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray32ToWasm0(out_owner_0, wasm.__wbindgen_export3);
+    const ptr2 = passArray32ToWasm0(note_path_0_flat, wasm.__wbindgen_export3);
     const len2 = WASM_VECTOR_LEN;
-    const ptr3 = passArray32ToWasm0(note_path_0_flat, wasm.__wbindgen_export3);
+    const ptr3 = passArray32ToWasm0(note_path_1_flat, wasm.__wbindgen_export3);
     const len3 = WASM_VECTOR_LEN;
-    const ptr4 = passArray32ToWasm0(note_path_1_flat, wasm.__wbindgen_export3);
-    const len4 = WASM_VECTOR_LEN;
-    const ptr5 = passArray32ToWasm0(cred_path_flat, wasm.__wbindgen_export3);
-    const len5 = WASM_VECTOR_LEN;
-    const ret = wasm.prove_and_verify(epoch, ptr0, len0, ptr1, len1, sk, in_asset, in_amt_0, in_rand_0, in_amt_1, in_rand_1, out_amt_0, ptr2, len2, out_rand_0, out_amt_1, out_rand_1, cred_issuer, cred_expiry, cred_secret, ptr3, len3, ptr4, len4, ptr5, len5);
+    const ret = wasm.prove_and_verify(epoch, ptr0, len0, sk, in_asset, in_amt_0, in_rand_0, in_amt_1, in_rand_1, out_amt_0, ptr1, len1, out_rand_0, out_amt_1, out_rand_1, ptr2, len2, ptr3, len3);
     return ProofOutput.__wrap(ret);
 }
 
@@ -777,28 +746,27 @@ export function verify_audit_proof(proof_b64, window_start, window_end, claimed_
  * Returns a JS string: "ok" on success, error message on failure.
  * @param {string} proof_b64
  * @param {Uint32Array} note_root
- * @param {Uint32Array} cred_root
+ * @param {Uint32Array} accumulator_root
  * @param {number} epoch
  * @param {Uint32Array} null_0
  * @param {Uint32Array} null_1
  * @param {Uint32Array} out_cm_0
  * @param {Uint32Array} out_cm_1
- * @param {Uint32Array} cred_null
  * @param {Uint32Array} tx_binding_hash
  * @param {Uint32Array} sender_binding_tag
  * @param {number} log_num_rows
  * @returns {string}
  */
-export function verify_serialized_proof(proof_b64, note_root, cred_root, epoch, null_0, null_1, out_cm_0, out_cm_1, cred_null, tx_binding_hash, sender_binding_tag, log_num_rows) {
-    let deferred11_0;
-    let deferred11_1;
+export function verify_serialized_proof(proof_b64, note_root, accumulator_root, epoch, null_0, null_1, out_cm_0, out_cm_1, tx_binding_hash, sender_binding_tag, log_num_rows) {
+    let deferred10_0;
+    let deferred10_1;
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
         const ptr0 = passStringToWasm0(proof_b64, wasm.__wbindgen_export3, wasm.__wbindgen_export4);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passArray32ToWasm0(note_root, wasm.__wbindgen_export3);
         const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passArray32ToWasm0(cred_root, wasm.__wbindgen_export3);
+        const ptr2 = passArray32ToWasm0(accumulator_root, wasm.__wbindgen_export3);
         const len2 = WASM_VECTOR_LEN;
         const ptr3 = passArray32ToWasm0(null_0, wasm.__wbindgen_export3);
         const len3 = WASM_VECTOR_LEN;
@@ -808,21 +776,19 @@ export function verify_serialized_proof(proof_b64, note_root, cred_root, epoch, 
         const len5 = WASM_VECTOR_LEN;
         const ptr6 = passArray32ToWasm0(out_cm_1, wasm.__wbindgen_export3);
         const len6 = WASM_VECTOR_LEN;
-        const ptr7 = passArray32ToWasm0(cred_null, wasm.__wbindgen_export3);
+        const ptr7 = passArray32ToWasm0(tx_binding_hash, wasm.__wbindgen_export3);
         const len7 = WASM_VECTOR_LEN;
-        const ptr8 = passArray32ToWasm0(tx_binding_hash, wasm.__wbindgen_export3);
+        const ptr8 = passArray32ToWasm0(sender_binding_tag, wasm.__wbindgen_export3);
         const len8 = WASM_VECTOR_LEN;
-        const ptr9 = passArray32ToWasm0(sender_binding_tag, wasm.__wbindgen_export3);
-        const len9 = WASM_VECTOR_LEN;
-        wasm.verify_serialized_proof(retptr, ptr0, len0, ptr1, len1, ptr2, len2, epoch, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, ptr8, len8, ptr9, len9, log_num_rows);
+        wasm.verify_serialized_proof(retptr, ptr0, len0, ptr1, len1, ptr2, len2, epoch, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6, ptr7, len7, ptr8, len8, log_num_rows);
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        deferred11_0 = r0;
-        deferred11_1 = r1;
+        deferred10_0 = r0;
+        deferred10_1 = r1;
         return getStringFromWasm0(r0, r1);
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
-        wasm.__wbindgen_export2(deferred11_0, deferred11_1, 1);
+        wasm.__wbindgen_export2(deferred10_0, deferred10_1, 1);
     }
 }
 

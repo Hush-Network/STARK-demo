@@ -18,9 +18,6 @@ use crate::{
 };
 
 const DEMO_SENDER_KEY: u32 = 12_345;
-const DEMO_CRED_ISSUER: u32 = 1;
-const DEMO_CRED_SECRET: u32 = 777;
-const DEMO_ACTIVE_CREDENTIAL_EXPIRY: u32 = 50_000;
 const DEMO_EPOCH: u32 = 1_000;
 const DEMO_BLOCK_HEIGHT: u64 = 4_200;
 const DEMO_PROPOSER_ID: u32 = 1;
@@ -93,9 +90,8 @@ pub struct PaymentProofView {
     pub null_1: [u32; 4],
     pub out_cm_0: [u32; 4],
     pub out_cm_1: [u32; 4],
-    pub cred_null: [u32; 4],
+    pub accumulator_root: [u32; 4],
     pub note_root: [u32; 4],
-    pub cred_root: [u32; 4],
     pub epoch: u32,
     pub tx_binding_hash: [u32; 4],
     pub sender_binding_tag: [u32; 4],
@@ -368,16 +364,8 @@ fn prepare_wallet_submission(
         )?,
     };
 
-    let cred_expiry = request.credential_expiry.unwrap_or(DEMO_ACTIVE_CREDENTIAL_EXPIRY);
-    let payment_context = build_payment_merkle_context(
-        DEMO_SENDER_KEY,
-        payment_inputs,
-        payment_asset,
-        DEMO_CRED_ISSUER,
-        cred_expiry,
-        DEMO_CRED_SECRET,
-        DEMO_EPOCH,
-    );
+    let payment_context =
+        build_payment_merkle_context(DEMO_SENDER_KEY, payment_inputs, payment_asset, DEMO_EPOCH);
     let payment_witness = tx.build_witness(DEMO_SENDER_KEY, &payment_context)?;
 
     let fee_sidecar_witness = if route == PaymentRoute::HushSidecar {
@@ -433,9 +421,8 @@ fn payment_proof_view(
         null_1: bundle.payment.public_data.null_1,
         out_cm_0: bundle.payment.public_data.out_cm_0,
         out_cm_1: bundle.payment.public_data.out_cm_1,
-        cred_null: bundle.payment.public_data.cred_null,
+        accumulator_root: bundle.payment.public_data.accumulator_root,
         note_root: bundle.payment.public_data.note_root,
-        cred_root: bundle.payment.public_data.cred_root,
         epoch: bundle.payment.public_data.epoch,
         tx_binding_hash: bundle.payment.public_data.tx_binding_hash,
         sender_binding_tag: bundle.payment.public_data.sender_binding_tag,
@@ -631,8 +618,8 @@ mod tests {
             amount: 8_000,
             fee_schedule_version: PAYMENT_FEE_SCHEDULE_STANDARD,
         })
-        .expect_err("cross-stable route should be rejected");
-        assert!(err.contains("cross-stablecoin"));
+        .expect_err("cross-asset route should be rejected");
+        assert!(err.contains("cross-asset"));
     }
 
     #[test]
