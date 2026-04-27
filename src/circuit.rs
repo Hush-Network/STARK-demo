@@ -46,26 +46,27 @@ const MERKLE_LEVEL_COLS: usize = 9 + poseidon2_air::HASH_INTERMEDIATE_COLS;
 const NUM_AMOUNTS: usize = 5;
 const LIMB_RANGE_COLS: usize = NUM_AMOUNTS * NUM_LIMBS * LIMB_BITS; // 300
 
-// Base: 78 witness + 24 aux (null_diff_inv, expiry_diff, 16 expiry bits, 6 carry bits)
+// Base: 75 witness + 7 aux (null_diff_inv, 6 carry bits)
 // Witness layout (HashOut fields are 4 columns each):
 //   sk(1) + owner(4) + in_asset(1) + in_amt_0(4) + in_rand_0(1) + in_amt_1(4) + in_rand_1(1)
 //   + in_cm_0(4) + in_cm_1(4) + null_0(4) + null_1(4)
 //   + out_amt_0(4) + out_owner_0(4) + out_rand_0(1) + out_amt_1(4) + out_rand_1(1) + fee_limbs(4)
-//   + out_cm_0(4) + out_cm_1(4) + cred_issuer(1) + cred_expiry(1) + cred_secret(1) + cred_cm(4) + cred_null(4)
-//   + epoch(1) + pub_note_root(4) + pub_cred_root(4)
-//   = 78 witness columns
-// Aux: null_diff_inv(1) + expiry_diff(1) + 16 expiry bits + 6 carry bits = 24
-const BASE_AUX_COLS: usize = 78 + 24;
+//   + out_cm_0(4) + out_cm_1(4)
+//   + att_root_0(4) + att_root_1(4)
+//   + epoch(1) + pub_note_root(4) + pub_accumulator_root(4)
+//   = 75 witness columns
+// Aux: null_diff_inv(1) + 6 carry bits = 7
+const BASE_AUX_COLS: usize = 75 + 7;
 
 // Hash evaluations (single-block = 1 permutation, sponge_2block = 2 permutations):
-//   owner(1) + null_0(1) + null_1(1) + issuer_id(1) + cred_null(1)     = 5 single-block
-//   in_cm_0(2) + in_cm_1(2) + cred_cm(2) + out_cm_0(2) + out_cm_1(2)  = 5 sponge (2-block)
-//   Total = 5 * H + 5 * 2H = 15 * H
+//   owner(1) + null_0(1) + null_1(1)                                   = 3 single-block
+//   in_cm_0(2) + in_cm_1(2) + out_cm_0(2) + out_cm_1(2)               = 4 sponge (2-block, 14 inputs)
+//   Total = 3 * H + 4 * 2H = 11 * H
 const HASH_COLS: usize =
-    5 * poseidon2_air::HASH_INTERMEDIATE_COLS + 5 * poseidon2_air::SPONGE_2BLOCK_INTERMEDIATE_COLS;
+    3 * poseidon2_air::HASH_INTERMEDIATE_COLS + 4 * poseidon2_air::SPONGE_2BLOCK_INTERMEDIATE_COLS;
 
 const NUM_COLS: usize =
-    BASE_AUX_COLS + LIMB_RANGE_COLS + HASH_COLS + 3 * MERKLE_DEPTH * MERKLE_LEVEL_COLS;
+    BASE_AUX_COLS + LIMB_RANGE_COLS + HASH_COLS + 2 * MERKLE_DEPTH * MERKLE_LEVEL_COLS;
 
 fn constrain_merkle_path<E: EvalAtRow>(eval: &mut E, leaf: [E::F; 4], pub_root: [E::F; 4]) {
     let mut current = leaf;
@@ -114,7 +115,7 @@ impl FrameworkEval for HushPaymentEval {
     }
 
     fn evaluate<E: EvalAtRow>(&self, mut eval: E) -> E {
-        // Base trace columns (order must match gen_trace).
+        // Base trace columns (order must match gen_trace and write_trace_row).
         // HashOut fields occupy 4 consecutive columns each.
         let sk = eval.next_trace_mask();
         let owner: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
@@ -137,37 +138,22 @@ impl FrameworkEval for HushPaymentEval {
         let fee_limbs: [E::F; NUM_LIMBS] = core::array::from_fn(|_| eval.next_trace_mask());
         let out_cm_0: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
         let out_cm_1: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
-        let cred_issuer = eval.next_trace_mask();
-        let cred_expiry = eval.next_trace_mask();
-        let cred_secret = eval.next_trace_mask();
-        let cred_cm: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
-        let cred_null: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
+        // Provenance attestation roots for input notes (zeros = unregulated sentinel).
+        let att_root_0: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
+        let att_root_1: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
         let epoch = eval.next_trace_mask();
         let pub_note_root: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
-        let pub_cred_root: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
+        let pub_accumulator_root: [E::F; 4] = core::array::from_fn(|_| eval.next_trace_mask());
 
         // Nullifier inequality: check element 0 differs via multiplicative inverse
         let null_diff_inv = eval.next_trace_mask();
         eval.add_constraint((null_0[0].clone() - null_1[0].clone()) * null_diff_inv - E::F::one());
 
-        // Credential not expired: cred_expiry - epoch - 1 >= 0
-        let expiry_diff = eval.next_trace_mask();
-        let mut reconstructed = E::F::zero();
-        let mut power_of_two = E::F::one();
-        let two = E::F::one() + E::F::one();
-        for _ in 0..16 {
-            let bit = eval.next_trace_mask();
-            eval.add_constraint(bit.clone() * (bit.clone() - E::F::one()));
-            reconstructed += bit * power_of_two.clone();
-            power_of_two *= two.clone();
-        }
-        eval.add_constraint(reconstructed - expiry_diff.clone());
-        eval.add_constraint(expiry_diff - (cred_expiry.clone() - epoch.clone() - E::F::one()));
-
         // Carry columns for limb-by-limb balance conservation.
         // Carries are in [-2, 1]. Biased carry = carry + CARRY_BIAS is in [0, 3] (2-bit).
         let carry_bias = E::F::from(M31::from(CARRY_BIAS));
         let radix = E::F::from(M31::from(RADIX as u32));
+        let two = E::F::one() + E::F::one();
         let mut carries: [E::F; NUM_CARRIES] = core::array::from_fn(|_| E::F::zero());
         for k in 0..NUM_CARRIES {
             let c_b0 = eval.next_trace_mask();
@@ -257,8 +243,8 @@ impl FrameworkEval for HushPaymentEval {
             eval.add_constraint(null_1[i].clone() - null1_out[i].clone());
         }
 
-        // 4. Note commitment 0: sponge_2block([asset, a0..a3, owner[0..3], rand], DOMAIN_NOTE_CM)
-        //    10 inputs -> 2 sponge blocks
+        // 4. Note commitment 0: sponge_2block(14 inputs, DOMAIN_NOTE_CM)
+        //    [asset, a0..a3, owner[0..3], rand, att_root_0[0..3]] = 14 inputs -> 2 sponge blocks
         let cm0_out = poseidon2_air::constrain_sponge_2block(
             &mut eval,
             &[
@@ -272,6 +258,10 @@ impl FrameworkEval for HushPaymentEval {
                 owner_out[2].clone(),
                 owner_out[3].clone(),
                 in_rand_0.clone(),
+                att_root_0[0].clone(),
+                att_root_0[1].clone(),
+                att_root_0[2].clone(),
+                att_root_0[3].clone(),
             ],
             poseidon2::DOMAIN_NOTE_CM,
         );
@@ -279,7 +269,7 @@ impl FrameworkEval for HushPaymentEval {
             eval.add_constraint(in_cm_0[i].clone() - cm0_out[i].clone());
         }
 
-        // 5. Note commitment 1: sponge_2block([asset, a0..a3, owner[0..3], rand], DOMAIN_NOTE_CM)
+        // 5. Note commitment 1: sponge_2block(14 inputs, DOMAIN_NOTE_CM)
         let cm1_out = poseidon2_air::constrain_sponge_2block(
             &mut eval,
             &[
@@ -293,6 +283,10 @@ impl FrameworkEval for HushPaymentEval {
                 owner_out[2].clone(),
                 owner_out[3].clone(),
                 in_rand_1,
+                att_root_1[0].clone(),
+                att_root_1[1].clone(),
+                att_root_1[2].clone(),
+                att_root_1[3].clone(),
             ],
             poseidon2::DOMAIN_NOTE_CM,
         );
@@ -300,36 +294,8 @@ impl FrameworkEval for HushPaymentEval {
             eval.add_constraint(in_cm_1[i].clone() - cm1_out[i].clone());
         }
 
-        // 6. Issuer ID derivation: hash2(cred_issuer, 0, DOMAIN_ISSUER_ID)
-        let issuer_id = poseidon2_air::constrain_hash2(
-            &mut eval,
-            cred_issuer,
-            E::F::zero(),
-            poseidon2::DOMAIN_ISSUER_ID,
-        );
-
-        // 7. Credential commitment: sponge_2block([issuer[0..3], owner[0..3], expiry, secret], DOMAIN_CRED_CM)
-        let credcm_out = poseidon2_air::constrain_sponge_2block(
-            &mut eval,
-            &[
-                issuer_id[0].clone(),
-                issuer_id[1].clone(),
-                issuer_id[2].clone(),
-                issuer_id[3].clone(),
-                owner_out[0].clone(),
-                owner_out[1].clone(),
-                owner_out[2].clone(),
-                owner_out[3].clone(),
-                cred_expiry.clone(),
-                cred_secret.clone(),
-            ],
-            poseidon2::DOMAIN_CRED_CM,
-        );
-        for i in 0..4 {
-            eval.add_constraint(cred_cm[i].clone() - credcm_out[i].clone());
-        }
-
-        // 8. Output commitment 0: sponge_2block([asset, a0..a3, out_owner_0[0..3], rand], DOMAIN_NOTE_CM)
+        // 6. Output commitment 0: inherits att_root_0 (provenance continuity)
+        //    sponge_2block([asset, a0..a3, out_owner_0[0..3], rand, att_root_0[0..3]], DOMAIN_NOTE_CM)
         let outcm0_out = poseidon2_air::constrain_sponge_2block(
             &mut eval,
             &[
@@ -343,6 +309,10 @@ impl FrameworkEval for HushPaymentEval {
                 out_owner_0[2].clone(),
                 out_owner_0[3].clone(),
                 out_rand_0.clone(),
+                att_root_0[0].clone(),
+                att_root_0[1].clone(),
+                att_root_0[2].clone(),
+                att_root_0[3].clone(),
             ],
             poseidon2::DOMAIN_NOTE_CM,
         );
@@ -350,7 +320,8 @@ impl FrameworkEval for HushPaymentEval {
             eval.add_constraint(out_cm_0[i].clone() - outcm0_out[i].clone());
         }
 
-        // 9. Output commitment 1 (change back to sender): sponge_2block([asset, a0..a3, owner[0..3], rand], DOMAIN_NOTE_CM)
+        // 7. Output commitment 1 (change back to sender): inherits att_root_0
+        //    sponge_2block([asset, a0..a3, owner[0..3], rand, att_root_0[0..3]], DOMAIN_NOTE_CM)
         let outcm1_out = poseidon2_air::constrain_sponge_2block(
             &mut eval,
             &[
@@ -364,6 +335,10 @@ impl FrameworkEval for HushPaymentEval {
                 owner_out[2].clone(),
                 owner_out[3].clone(),
                 out_rand_1.clone(),
+                att_root_0[0].clone(),
+                att_root_0[1].clone(),
+                att_root_0[2].clone(),
+                att_root_0[3].clone(),
             ],
             poseidon2::DOMAIN_NOTE_CM,
         );
@@ -371,27 +346,21 @@ impl FrameworkEval for HushPaymentEval {
             eval.add_constraint(out_cm_1[i].clone() - outcm1_out[i].clone());
         }
 
-        // 10. Credential nullifier: hash_block([secret, cred_cm[0..3], epoch], DOMAIN_CRED_NULL) - 6 inputs
-        let crednull_out = {
-            let mut input: [E::F; poseidon2::WIDTH] = core::array::from_fn(|_| E::F::zero());
-            input[0] = cred_secret;
-            input[1] = cred_cm[0].clone();
-            input[2] = cred_cm[1].clone();
-            input[3] = cred_cm[2].clone();
-            input[4] = cred_cm[3].clone();
-            input[5] = epoch;
-            input[poseidon2::RATE] = E::F::from(M31::from(poseidon2::DOMAIN_CRED_NULL));
-            let out = poseidon2_air::constrain_permutation(&mut eval, input);
-            [out[0].clone(), out[1].clone(), out[2].clone(), out[3].clone()]
-        };
+        // Provenance continuity: both input notes must carry the same attestation root.
+        // att_root_0 == att_root_1 (element-wise). Zeros = unregulated sentinel (both inputs unregulated).
         for i in 0..4 {
-            eval.add_constraint(cred_null[i].clone() - crednull_out[i].clone());
+            eval.add_constraint(att_root_0[i].clone() - att_root_1[i].clone());
         }
 
-        // Merkle inclusion: two note paths + one credential path
+        // Silence the unused-variable warning for pub_accumulator_root: it is mixed into the
+        // proof channel in prove_payment (binding), not enforced by a circuit constraint in v1.
+        // In-circuit non-revocation requires migration to a key-addressed sparse Merkle accumulator.
+        let _ = pub_accumulator_root;
+        let _ = epoch;
+
+        // Merkle inclusion: two note paths (no credential path in v1 canonical circuit)
         constrain_merkle_path(&mut eval, in_cm_0, pub_note_root.clone());
         constrain_merkle_path(&mut eval, in_cm_1, pub_note_root);
-        constrain_merkle_path(&mut eval, cred_cm, pub_cred_root);
 
         eval
     }
@@ -436,6 +405,9 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
     let out_owner_0 = poseidon2::u32_array_to_hashout(witness.out_owner_0);
     let out_rand_0 = M31::from(witness.out_rand_0);
     let out_rand_1 = M31::from(witness.out_rand_1);
+    let att_root_0 = poseidon2::u32_array_to_hashout(witness.att_root_0);
+    let att_root_1 = poseidon2::u32_array_to_hashout(witness.att_root_1);
+    let pub_accumulator_root = poseidon2::u32_array_to_hashout(witness.pub_accumulator_root);
 
     // Decompose amounts into 4 limbs each
     let in0_limbs = amount_to_limbs(witness.in_amt_0);
@@ -450,15 +422,16 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
     let out1_m31: [M31; NUM_LIMBS] = core::array::from_fn(|i| M31::from(out1_limbs[i]));
     let fee_m31: [M31; NUM_LIMBS] = core::array::from_fn(|i| M31::from(fee_limbs[i]));
 
-    // Note commitments: sponge_hash([asset, a0..a3, owner[0..3], rand], DOMAIN_NOTE_CM)
+    // Note commitments: 14-input sponge (asset, a0..a3, owner[0..3], rand, att_root[0..3])
     let in_cm_0 = poseidon2::note_commitment(
-        in_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner, in_rand_0,
+        in_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner, in_rand_0, att_root_0,
     );
     let in_cm_1 = poseidon2::note_commitment(
-        in_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner, in_rand_1,
+        in_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner, in_rand_1, att_root_1,
     );
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
+    // Output commitments inherit att_root_0 (provenance continuity; att_root_0 == att_root_1 enforced in circuit)
     let out_cm_0 = poseidon2::note_commitment(
         in_asset,
         out0_m31[0],
@@ -467,6 +440,7 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
         out0_m31[3],
         out_owner_0,
         out_rand_0,
+        att_root_0,
     );
     let out_cm_1 = poseidon2::note_commitment(
         in_asset,
@@ -476,30 +450,16 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
         out1_m31[3],
         owner,
         out_rand_1,
+        att_root_0,
     );
 
-    let cred_issuer = M31::from(witness.cred_issuer);
-    let cred_expiry = M31::from(witness.cred_expiry);
-    let cred_secret = M31::from(witness.cred_secret);
-    let issuer_id = poseidon2::derive_issuer_id(cred_issuer);
-    let cred_cm = poseidon2::credential_commitment(issuer_id, owner, cred_expiry, cred_secret);
     let epoch = M31::from(witness.epoch);
-    let cred_null = poseidon2::credential_nullifier(cred_secret, cred_cm, epoch);
-
     let pub_note_root = poseidon2::u32_array_to_hashout(witness.note_root);
-    let pub_cred_root = poseidon2::u32_array_to_hashout(witness.cred_root);
 
     // Nullifier inequality: check element 0
     let null_diff = null_0[0] - null_1[0];
     let null_diff_inv =
         if null_diff == M31::from(0u32) { M31::from(0u32) } else { null_diff.inverse() };
-
-    let expiry_diff_val = witness.cred_expiry.wrapping_sub(witness.epoch).wrapping_sub(1);
-    let expiry_diff = M31::from(expiry_diff_val);
-    let mut expiry_bits = [M31::from(0u32); 16];
-    for i in 0..16 {
-        expiry_bits[i] = M31::from((expiry_diff_val >> i) & 1);
-    }
 
     // Compute carries for balance conservation
     let carries = compute_carries(witness);
@@ -508,7 +468,7 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
         core::array::from_fn(|b| M31::from((biased >> b) & 1))
     });
 
-    // Hash intermediates
+    // Hash intermediates (order must match evaluate() and write_trace_row())
     // 1. Owner derivation (single-block)
     let owner_hash_cols =
         poseidon2_air::gen_hash2_intermediates(sk, M31::from(0u32), poseidon2::DOMAIN_OWNER);
@@ -535,47 +495,47 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
         poseidon2_air::gen_permutation_intermediates(&input)
     };
 
-    // 4-5. Note commitments: 10-input sponge (2 blocks)
+    // 4-5. Note commitments: 14-input sponge (2 blocks)
     let cm0_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
         &[
-            in_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner[0], owner[1], owner[2],
-            owner[3], in_rand_0,
+            in_asset,
+            in0_m31[0],
+            in0_m31[1],
+            in0_m31[2],
+            in0_m31[3],
+            owner[0],
+            owner[1],
+            owner[2],
+            owner[3],
+            in_rand_0,
+            att_root_0[0],
+            att_root_0[1],
+            att_root_0[2],
+            att_root_0[3],
         ],
         poseidon2::DOMAIN_NOTE_CM,
     );
     let cm1_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
         &[
-            in_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner[0], owner[1], owner[2],
-            owner[3], in_rand_1,
-        ],
-        poseidon2::DOMAIN_NOTE_CM,
-    );
-
-    // 6. Issuer ID derivation (single-block)
-    let issuerid_hash_cols = poseidon2_air::gen_hash2_intermediates(
-        cred_issuer,
-        M31::from(0u32),
-        poseidon2::DOMAIN_ISSUER_ID,
-    );
-
-    // 7. Credential commitment: 10-input sponge (2 blocks)
-    let credcm_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
-        &[
-            issuer_id[0],
-            issuer_id[1],
-            issuer_id[2],
-            issuer_id[3],
+            in_asset,
+            in1_m31[0],
+            in1_m31[1],
+            in1_m31[2],
+            in1_m31[3],
             owner[0],
             owner[1],
             owner[2],
             owner[3],
-            cred_expiry,
-            cred_secret,
+            in_rand_1,
+            att_root_1[0],
+            att_root_1[1],
+            att_root_1[2],
+            att_root_1[3],
         ],
-        poseidon2::DOMAIN_CRED_CM,
+        poseidon2::DOMAIN_NOTE_CM,
     );
 
-    // 8-9. Output commitments: 10-input sponge (2 blocks)
+    // 6-7. Output commitments: 14-input sponge (2 blocks), inherit att_root_0
     let outcm0_hash_cols = poseidon2_air::gen_sponge_2block_intermediates(
         &[
             in_asset,
@@ -588,6 +548,10 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
             out_owner_0[2],
             out_owner_0[3],
             out_rand_0,
+            att_root_0[0],
+            att_root_0[1],
+            att_root_0[2],
+            att_root_0[3],
         ],
         poseidon2::DOMAIN_NOTE_CM,
     );
@@ -603,27 +567,17 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
             owner[2],
             owner[3],
             out_rand_1,
+            att_root_0[0],
+            att_root_0[1],
+            att_root_0[2],
+            att_root_0[3],
         ],
         poseidon2::DOMAIN_NOTE_CM,
     );
 
-    // 10. Credential nullifier: hash_block([secret, cm[0..3], epoch], DOMAIN_CRED_NULL) - 6 inputs
-    let crednull_hash_cols = {
-        let mut input = [M31::from(0u32); poseidon2::WIDTH];
-        input[0] = cred_secret;
-        input[1] = cred_cm[0];
-        input[2] = cred_cm[1];
-        input[3] = cred_cm[2];
-        input[4] = cred_cm[3];
-        input[5] = epoch;
-        input[poseidon2::RATE] = M31::from(poseidon2::DOMAIN_CRED_NULL);
-        poseidon2_air::gen_permutation_intermediates(&input)
-    };
-
-    // Merkle path intermediates
+    // Merkle path intermediates (note paths only)
     let note_path_0_data = gen_merkle_path_trace(in_cm_0, &witness.note_path_0);
     let note_path_1_data = gen_merkle_path_trace(in_cm_1, &witness.note_path_1);
-    let cred_path_data = gen_merkle_path_trace(cred_cm, &witness.cred_path);
 
     TraceRowData {
         sk,
@@ -645,17 +599,12 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
         fee_m31,
         out_cm_0,
         out_cm_1,
-        cred_issuer,
-        cred_expiry,
-        cred_secret,
-        cred_cm,
-        cred_null,
+        att_root_0,
+        att_root_1,
         epoch,
         pub_note_root,
-        pub_cred_root,
+        pub_accumulator_root,
         null_diff_inv,
-        expiry_diff,
-        expiry_bits,
         carry_bits,
         in0_limbs,
         in1_limbs,
@@ -667,14 +616,10 @@ fn gen_trace_row_data(witness: &PaymentWitness) -> TraceRowData {
         null1_hash_cols,
         cm0_hash_cols,
         cm1_hash_cols,
-        issuerid_hash_cols,
-        credcm_hash_cols,
         outcm0_hash_cols,
         outcm1_hash_cols,
-        crednull_hash_cols,
         note_path_0_data,
         note_path_1_data,
-        cred_path_data,
     }
 }
 
@@ -698,17 +643,12 @@ struct TraceRowData {
     fee_m31: [M31; NUM_LIMBS],
     out_cm_0: poseidon2::HashOut,
     out_cm_1: poseidon2::HashOut,
-    cred_issuer: M31,
-    cred_expiry: M31,
-    cred_secret: M31,
-    cred_cm: poseidon2::HashOut,
-    cred_null: poseidon2::HashOut,
+    att_root_0: poseidon2::HashOut,
+    att_root_1: poseidon2::HashOut,
     epoch: M31,
     pub_note_root: poseidon2::HashOut,
-    pub_cred_root: poseidon2::HashOut,
+    pub_accumulator_root: poseidon2::HashOut,
     null_diff_inv: M31,
-    expiry_diff: M31,
-    expiry_bits: [M31; 16],
     carry_bits: [[M31; CARRY_BITS]; NUM_CARRIES],
     in0_limbs: [u32; NUM_LIMBS],
     in1_limbs: [u32; NUM_LIMBS],
@@ -720,14 +660,10 @@ struct TraceRowData {
     null1_hash_cols: Vec<M31>,
     cm0_hash_cols: Vec<M31>,
     cm1_hash_cols: Vec<M31>,
-    issuerid_hash_cols: Vec<M31>,
-    credcm_hash_cols: Vec<M31>,
     outcm0_hash_cols: Vec<M31>,
     outcm1_hash_cols: Vec<M31>,
-    crednull_hash_cols: Vec<M31>,
     note_path_0_data: Vec<M31>,
     note_path_1_data: Vec<M31>,
-    cred_path_data: Vec<M31>,
 }
 
 /// Write one trace row into the column buffers.
@@ -783,28 +719,21 @@ fn write_trace_row(cols: &mut [BaseColumn], r: usize, d: &TraceRowData) {
     for &v in &d.out_cm_1 {
         set(&mut col, v);
     }
-    set(&mut col, d.cred_issuer);
-    set(&mut col, d.cred_expiry);
-    set(&mut col, d.cred_secret);
-    for &v in &d.cred_cm {
+    for &v in &d.att_root_0 {
         set(&mut col, v);
     }
-    for &v in &d.cred_null {
+    for &v in &d.att_root_1 {
         set(&mut col, v);
     }
     set(&mut col, d.epoch);
     for &v in &d.pub_note_root {
         set(&mut col, v);
     }
-    for &v in &d.pub_cred_root {
+    for &v in &d.pub_accumulator_root {
         set(&mut col, v);
     }
     // Auxiliary
     set(&mut col, d.null_diff_inv);
-    set(&mut col, d.expiry_diff);
-    for i in 0..16 {
-        set(&mut col, d.expiry_bits[i]);
-    }
     // Carry bits
     for k in 0..NUM_CARRIES {
         for b in 0..CARRY_BITS {
@@ -828,16 +757,13 @@ fn write_trace_row(cols: &mut [BaseColumn], r: usize, d: &TraceRowData) {
     // Hash intermediates: order must match evaluate()
     // Single-block hashes use HASH_INTERMEDIATE_COLS, 2-block sponges use SPONGE_2BLOCK_INTERMEDIATE_COLS
     let all_hashes: &[&Vec<M31>] = &[
-        &d.owner_hash_cols,    // single-block
-        &d.null0_hash_cols,    // single-block
-        &d.null1_hash_cols,    // single-block
-        &d.cm0_hash_cols,      // 2-block sponge
-        &d.cm1_hash_cols,      // 2-block sponge
-        &d.issuerid_hash_cols, // single-block
-        &d.credcm_hash_cols,   // 2-block sponge
-        &d.outcm0_hash_cols,   // 2-block sponge
-        &d.outcm1_hash_cols,   // 2-block sponge
-        &d.crednull_hash_cols, // single-block
+        &d.owner_hash_cols,  // single-block
+        &d.null0_hash_cols,  // single-block
+        &d.null1_hash_cols,  // single-block
+        &d.cm0_hash_cols,    // 2-block sponge
+        &d.cm1_hash_cols,    // 2-block sponge
+        &d.outcm0_hash_cols, // 2-block sponge
+        &d.outcm1_hash_cols, // 2-block sponge
     ];
     for hash_cols in all_hashes {
         let h = hash_cols.len();
@@ -848,7 +774,7 @@ fn write_trace_row(cols: &mut [BaseColumn], r: usize, d: &TraceRowData) {
     }
 
     let path_cols = MERKLE_DEPTH * MERKLE_LEVEL_COLS;
-    let all_paths: [&Vec<M31>; 3] = [&d.note_path_0_data, &d.note_path_1_data, &d.cred_path_data];
+    let all_paths: [&Vec<M31>; 2] = [&d.note_path_0_data, &d.note_path_1_data];
     for path_data in &all_paths {
         for i in 0..path_cols {
             cols[col + i].set(r, path_data[i]);
@@ -911,7 +837,7 @@ fn gen_merkle_path_trace(
 pub struct PaymentPublicData {
     pub epoch: u32,
     pub note_root: [u32; 4],
-    pub cred_root: [u32; 4],
+    pub accumulator_root: [u32; 4],
     pub tx_binding_hash: [u32; 4],
     pub sender_binding_tag: [u32; 4],
     // Public outputs: nullifiers for spent-set, commitments for note tree (all HashOut = [u32; 4])
@@ -919,7 +845,6 @@ pub struct PaymentPublicData {
     pub null_1: [u32; 4],
     pub out_cm_0: [u32; 4],
     pub out_cm_1: [u32; 4],
-    pub cred_null: [u32; 4],
 }
 
 impl PaymentPublicData {
@@ -928,7 +853,7 @@ impl PaymentPublicData {
         for &v in &self.note_root {
             channel.mix_u64(v as u64);
         }
-        for &v in &self.cred_root {
+        for &v in &self.accumulator_root {
             channel.mix_u64(v as u64);
         }
         for &v in &self.tx_binding_hash {
@@ -947,9 +872,6 @@ impl PaymentPublicData {
             channel.mix_u64(v as u64);
         }
         for &v in &self.out_cm_1 {
-            channel.mix_u64(v as u64);
-        }
-        for &v in &self.cred_null {
             channel.mix_u64(v as u64);
         }
     }
@@ -980,30 +902,27 @@ pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
         ));
     }
 
-    if witness.cred_expiry <= witness.epoch {
-        return Err(format!(
-            "Credential expired: expiry {} <= epoch {}",
-            witness.cred_expiry, witness.epoch
-        ));
-    }
-
     #[cfg(debug_assertions)]
     eprintln!("[payment] trace: {NUM_COLS} cols, log_rows={log_num_rows}");
 
     let sk = M31::from(witness.sk);
     let owner = poseidon2::derive_owner(sk);
     let in_asset = M31::from(witness.in_asset);
+    let att_root_0 = poseidon2::u32_array_to_hashout(witness.att_root_0);
+    let att_root_1 = poseidon2::u32_array_to_hashout(witness.att_root_1);
     let in_cm_0 = poseidon2::note_commitment_u64(
         in_asset,
         witness.in_amt_0,
         owner,
         M31::from(witness.in_rand_0),
+        att_root_0,
     );
     let in_cm_1 = poseidon2::note_commitment_u64(
         in_asset,
         witness.in_amt_1,
         owner,
         M31::from(witness.in_rand_1),
+        att_root_1,
     );
 
     // Verify Merkle paths
@@ -1017,23 +936,6 @@ pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
     }
     if !poseidon2::verify_merkle_path(in_cm_1, &note_path_1, note_root) {
         return Err("Note Merkle path for input 1 is invalid".to_string());
-    }
-
-    let issuer_id = poseidon2::derive_issuer_id(M31::from(witness.cred_issuer));
-    let cred_cm = poseidon2::credential_commitment(
-        issuer_id,
-        owner,
-        M31::from(witness.cred_expiry),
-        M31::from(witness.cred_secret),
-    );
-    let cred_root = poseidon2::u32_array_to_hashout(witness.cred_root);
-    let cred_path: Vec<(poseidon2::HashOut, u32)> =
-        witness.cred_path.iter().map(|&(s, d)| (poseidon2::u32_array_to_hashout(s), d)).collect();
-    if !poseidon2::verify_merkle_path(cred_cm, &cred_path, cred_root) {
-        return Err(
-            "Credential root mismatch: computed credential does not match the valid credential set"
-                .to_string(),
-        );
     }
 
     let expected_binding_hash = compute_mode_a_tx_binding_hash(
@@ -1064,7 +966,7 @@ pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
         ));
     }
 
-    // Compute public outputs
+    // Compute public outputs (output notes inherit att_root_0; provenance continuity enforced in circuit)
     let null_0 = poseidon2::nullifier(sk, in_cm_0);
     let null_1 = poseidon2::nullifier(sk, in_cm_1);
     let out_cm_0 = poseidon2::note_commitment_u64(
@@ -1072,17 +974,14 @@ pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
         witness.out_amt_0,
         poseidon2::u32_array_to_hashout(witness.out_owner_0),
         M31::from(witness.out_rand_0),
+        att_root_0,
     );
     let out_cm_1 = poseidon2::note_commitment_u64(
         in_asset,
         witness.out_amt_1,
         owner,
         M31::from(witness.out_rand_1),
-    );
-    let cred_null = poseidon2::credential_nullifier(
-        M31::from(witness.cred_secret),
-        cred_cm,
-        M31::from(witness.epoch),
+        att_root_0,
     );
 
     let trace = gen_trace(witness, log_num_rows);
@@ -1090,14 +989,13 @@ pub fn prove_payment(witness: &PaymentWitness) -> Result<ProofResult, String> {
     let public_data = PaymentPublicData {
         epoch: witness.epoch,
         note_root: witness.note_root,
-        cred_root: witness.cred_root,
+        accumulator_root: witness.pub_accumulator_root,
         tx_binding_hash: witness.tx_binding_hash,
         sender_binding_tag: witness.sender_binding_tag,
         null_0: poseidon2::hashout_to_u32_array(null_0),
         null_1: poseidon2::hashout_to_u32_array(null_1),
         out_cm_0: poseidon2::hashout_to_u32_array(out_cm_0),
         out_cm_1: poseidon2::hashout_to_u32_array(out_cm_1),
-        cred_null: poseidon2::hashout_to_u32_array(cred_null),
     };
 
     let config = pcs_config();
@@ -1177,27 +1075,24 @@ fn validate_witness(witness: &PaymentWitness) -> Result<PaymentPublicData, Strin
             "Balance conservation failed: inputs {total_in} != recipient+change+fee {total_out}"
         ));
     }
-    if witness.cred_expiry <= witness.epoch {
-        return Err(format!(
-            "Credential expired: expiry {} <= epoch {}",
-            witness.cred_expiry, witness.epoch
-        ));
-    }
-
     let sk = M31::from(witness.sk);
     let owner = poseidon2::derive_owner(sk);
     let in_asset = M31::from(witness.in_asset);
+    let att_root_0 = poseidon2::u32_array_to_hashout(witness.att_root_0);
+    let att_root_1 = poseidon2::u32_array_to_hashout(witness.att_root_1);
     let in_cm_0 = poseidon2::note_commitment_u64(
         in_asset,
         witness.in_amt_0,
         owner,
         M31::from(witness.in_rand_0),
+        att_root_0,
     );
     let in_cm_1 = poseidon2::note_commitment_u64(
         in_asset,
         witness.in_amt_1,
         owner,
         M31::from(witness.in_rand_1),
+        att_root_1,
     );
 
     let note_root = poseidon2::u32_array_to_hashout(witness.note_root);
@@ -1210,20 +1105,6 @@ fn validate_witness(witness: &PaymentWitness) -> Result<PaymentPublicData, Strin
     }
     if !poseidon2::verify_merkle_path(in_cm_1, &note_path_1, note_root) {
         return Err("Note Merkle path for input 1 is invalid".to_string());
-    }
-
-    let issuer_id = poseidon2::derive_issuer_id(M31::from(witness.cred_issuer));
-    let cred_cm = poseidon2::credential_commitment(
-        issuer_id,
-        owner,
-        M31::from(witness.cred_expiry),
-        M31::from(witness.cred_secret),
-    );
-    let cred_root = poseidon2::u32_array_to_hashout(witness.cred_root);
-    let cred_path: Vec<(poseidon2::HashOut, u32)> =
-        witness.cred_path.iter().map(|&(s, d)| (poseidon2::u32_array_to_hashout(s), d)).collect();
-    if !poseidon2::verify_merkle_path(cred_cm, &cred_path, cred_root) {
-        return Err("Credential Merkle path is invalid".to_string());
     }
 
     let expected_binding_hash = compute_mode_a_tx_binding_hash(
@@ -1261,30 +1142,26 @@ fn validate_witness(witness: &PaymentWitness) -> Result<PaymentPublicData, Strin
         witness.out_amt_0,
         poseidon2::u32_array_to_hashout(witness.out_owner_0),
         M31::from(witness.out_rand_0),
+        att_root_0,
     );
     let out_cm_1 = poseidon2::note_commitment_u64(
         in_asset,
         witness.out_amt_1,
         owner,
         M31::from(witness.out_rand_1),
-    );
-    let cred_null = poseidon2::credential_nullifier(
-        M31::from(witness.cred_secret),
-        cred_cm,
-        M31::from(witness.epoch),
+        att_root_0,
     );
 
     Ok(PaymentPublicData {
         epoch: witness.epoch,
         note_root: witness.note_root,
-        cred_root: witness.cred_root,
+        accumulator_root: witness.pub_accumulator_root,
         tx_binding_hash: witness.tx_binding_hash,
         sender_binding_tag: witness.sender_binding_tag,
         null_0: poseidon2::hashout_to_u32_array(null_0),
         null_1: poseidon2::hashout_to_u32_array(null_1),
         out_cm_0: poseidon2::hashout_to_u32_array(out_cm_0),
         out_cm_1: poseidon2::hashout_to_u32_array(out_cm_1),
-        cred_null: poseidon2::hashout_to_u32_array(cred_null),
     })
 }
 
@@ -1410,7 +1287,6 @@ mod tests {
         assert_ne!(result.public_data.null_1, [0, 0, 0, 0]);
         assert_ne!(result.public_data.out_cm_0, [0, 0, 0, 0]);
         assert_ne!(result.public_data.out_cm_1, [0, 0, 0, 0]);
-        assert_ne!(result.public_data.cred_null, [0, 0, 0, 0]);
         assert_eq!(result.public_data.tx_binding_hash, witness.tx_binding_hash);
         assert_ne!(result.public_data.null_0, result.public_data.null_1);
     }
@@ -1431,23 +1307,6 @@ mod tests {
             Err(e) => assert!(e.contains("Balance conservation failed"), "Got: {e}"),
             Ok(_) => panic!("Should have rejected bad balance"),
         }
-    }
-
-    #[test]
-    fn test_expired_cred() {
-        let mut witness = valid_witness();
-        witness.cred_expiry = 500;
-        match prove_payment(&witness) {
-            Err(e) => assert!(e.contains("Credential expired"), "Got: {e}"),
-            Ok(_) => panic!("Should have rejected expired credential"),
-        }
-    }
-
-    #[test]
-    fn test_reject_revoked_credential() {
-        let mut witness = valid_witness();
-        witness.cred_issuer = 9999;
-        assert!(prove_payment(&witness).is_err());
     }
 
     #[test]
@@ -1530,10 +1389,22 @@ mod tests {
 
         let owner = poseidon2::derive_owner(M31::from(sk_val));
         let in_asset = M31::from(AssetId::Usdc as u32);
-        let in_cm_0 =
-            poseidon2::note_commitment_u64(in_asset, u64::from(amt_0), owner, M31::from(rand_0));
-        let in_cm_1 =
-            poseidon2::note_commitment_u64(in_asset, u64::from(amt_1), owner, M31::from(rand_1));
+        // Unregulated notes: attestation_root is all-zeros sentinel
+        let att_root_zero = [M31::zero(); 4];
+        let in_cm_0 = poseidon2::note_commitment_u64(
+            in_asset,
+            u64::from(amt_0),
+            owner,
+            M31::from(rand_0),
+            att_root_zero,
+        );
+        let in_cm_1 = poseidon2::note_commitment_u64(
+            in_asset,
+            u64::from(amt_1),
+            owner,
+            M31::from(rand_1),
+            att_root_zero,
+        );
 
         let mut note_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
         note_tree.set_leaf(0, in_cm_0);
@@ -1541,33 +1412,18 @@ mod tests {
         let note_path_0_vec = note_tree.path(0);
         let note_path_1_vec = note_tree.path(1);
 
-        let issuer_id = poseidon2::derive_issuer_id(M31::from(1u32));
-        let cred_cm = poseidon2::credential_commitment(
-            issuer_id,
-            owner,
-            M31::from(2000u32),
-            M31::from(sk_val + 100),
-        );
-        let mut cred_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
-        cred_tree.set_leaf(0, cred_cm);
-        let cred_path_vec = cred_tree.path(0);
-
         let mut note_path_0 = [([0u32; 4], 0u32); MERKLE_DEPTH];
         let mut note_path_1 = [([0u32; 4], 0u32); MERKLE_DEPTH];
-        let mut cred_path = [([0u32; 4], 0u32); MERKLE_DEPTH];
         for i in 0..MERKLE_DEPTH {
             note_path_0[i] =
                 (poseidon2::hashout_to_u32_array(note_path_0_vec[i].0), note_path_0_vec[i].1);
             note_path_1[i] =
                 (poseidon2::hashout_to_u32_array(note_path_1_vec[i].0), note_path_1_vec[i].1);
-            cred_path[i] =
-                (poseidon2::hashout_to_u32_array(cred_path_vec[i].0), cred_path_vec[i].1);
         }
 
         PaymentWitness {
             epoch: 1000,
             note_root: poseidon2::hashout_to_u32_array(note_tree.root()),
-            cred_root: poseidon2::hashout_to_u32_array(cred_tree.root()),
             sk: sk_val,
             in_asset: AssetId::Usdc as u32,
             in_amt_0: u64::from(amt_0),
@@ -1587,12 +1443,11 @@ mod tests {
             replay_domain: PAYMENT_TX_V1_REPLAY_DOMAIN,
             tx_binding_hash: tx.tx_binding_hash,
             sender_binding_tag: tx.attachment.sender_binding_tag,
-            cred_issuer: 1,
-            cred_expiry: 2000,
-            cred_secret: sk_val + 100,
+            att_root_0: [0u32; 4],
+            att_root_1: [0u32; 4],
+            pub_accumulator_root: [0u32; 4],
             note_path_0,
             note_path_1,
-            cred_path,
         }
     }
 
@@ -1619,7 +1474,7 @@ mod tests {
     #[test]
     fn test_batch_with_bad_witness() {
         let mut bad = make_witness(500, 5000, 3000, 11, 22, 4000);
-        bad.cred_expiry = 500; // expired credential
+        bad.out_amt_0 = 9999; // balance mismatch
         let witnesses = vec![make_witness(100, 5000, 3000, 11, 22, 4000), bad];
         match prove_payment_batch(&witnesses) {
             Err(e) => assert!(e.contains("Transaction 1 failed"), "Got: {e}"),
@@ -1638,7 +1493,6 @@ mod tests {
         assert_eq!(batch.public_data[0].null_1, single.public_data.null_1);
         assert_eq!(batch.public_data[0].out_cm_0, single.public_data.out_cm_0);
         assert_eq!(batch.public_data[0].out_cm_1, single.public_data.out_cm_1);
-        assert_eq!(batch.public_data[0].cred_null, single.public_data.cred_null);
     }
 
     #[test]

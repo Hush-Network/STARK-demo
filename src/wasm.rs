@@ -66,12 +66,11 @@ pub struct ProofOutput {
     null_1: [u32; 4],
     out_cm_0: [u32; 4],
     out_cm_1: [u32; 4],
-    cred_null: [u32; 4],
     // Serialized proof for independent verification (base64-encoded JSON)
     proof_bytes: String,
     // Public state used in this proof
     note_root: [u32; 4],
-    cred_root: [u32; 4],
+    accumulator_root: [u32; 4],
     epoch: u32,
     // Trace shape needed for independent verification
     log_num_rows: u32,
@@ -132,14 +131,6 @@ impl ProofOutput {
     }
 
     #[wasm_bindgen(getter)]
-    pub fn cred_null(&self) -> String {
-        format!(
-            "{:08x}{:08x}{:08x}{:08x}",
-            self.cred_null[0], self.cred_null[1], self.cred_null[2], self.cred_null[3]
-        )
-    }
-
-    #[wasm_bindgen(getter)]
     pub fn proof_bytes(&self) -> String {
         self.proof_bytes.clone()
     }
@@ -153,10 +144,13 @@ impl ProofOutput {
     }
 
     #[wasm_bindgen(getter)]
-    pub fn cred_root(&self) -> String {
+    pub fn accumulator_root(&self) -> String {
         format!(
             "{:08x}{:08x}{:08x}{:08x}",
-            self.cred_root[0], self.cred_root[1], self.cred_root[2], self.cred_root[3]
+            self.accumulator_root[0],
+            self.accumulator_root[1],
+            self.accumulator_root[2],
+            self.accumulator_root[3]
         )
     }
 
@@ -192,10 +186,9 @@ fn error_output(message: String, prove_time_ms: f64) -> ProofOutput {
         null_1: [0; 4],
         out_cm_0: [0; 4],
         out_cm_1: [0; 4],
-        cred_null: [0; 4],
         proof_bytes: String::new(),
         note_root: [0; 4],
-        cred_root: [0; 4],
+        accumulator_root: [0; 4],
         epoch: 0,
         log_num_rows: 0,
     }
@@ -338,7 +331,6 @@ pub fn dual_fee_submit_demo_payment_json(
 pub fn prove_and_verify(
     epoch: u32,
     note_root: &[u32],
-    cred_root: &[u32],
     sk: u32,
     in_asset: u32,
     in_amt_0: f64,
@@ -350,31 +342,23 @@ pub fn prove_and_verify(
     out_rand_0: u32,
     out_amt_1: f64,
     out_rand_1: u32,
-    cred_issuer: u32,
-    cred_expiry: u32,
-    cred_secret: u32,
     note_path_0_flat: &[u32],
     note_path_1_flat: &[u32],
-    cred_path_flat: &[u32],
 ) -> ProofOutput {
     let path_len = 5 * MERKLE_DEPTH;
-    if note_path_0_flat.len() != path_len
-        || note_path_1_flat.len() != path_len
-        || cred_path_flat.len() != path_len
-    {
+    if note_path_0_flat.len() != path_len || note_path_1_flat.len() != path_len {
         return error_output(
             format!("Merkle paths must each have {path_len} elements (5 per level)"),
             0.0,
         );
     }
-    if note_root.len() != 4 || cred_root.len() != 4 || out_owner_0.len() != 4 {
+    if note_root.len() != 4 || out_owner_0.len() != 4 {
         return error_output(
-            "note_root, cred_root, and out_owner_0 must each have 4 elements".to_string(),
+            "note_root and out_owner_0 must each have 4 elements".to_string(),
             0.0,
         );
     }
     let note_root: [u32; 4] = [note_root[0], note_root[1], note_root[2], note_root[3]];
-    let cred_root: [u32; 4] = [cred_root[0], cred_root[1], cred_root[2], cred_root[3]];
     let out_owner_0: [u32; 4] = [out_owner_0[0], out_owner_0[1], out_owner_0[2], out_owner_0[3]];
 
     let in_amt_0 = match validate_f64_amount(in_amt_0, "in_amt_0") {
@@ -407,10 +391,10 @@ pub fn prove_and_verify(
         out_amt_1,
         out_rand_1,
     );
+    // Unregulated notes: all-zeros attestation_root sentinel and empty accumulator.
     let witness = PaymentWitness {
         epoch,
         note_root,
-        cred_root,
         sk,
         in_asset,
         in_amt_0,
@@ -430,12 +414,11 @@ pub fn prove_and_verify(
         replay_domain: PAYMENT_TX_V1_REPLAY_DOMAIN,
         tx_binding_hash,
         sender_binding_tag: derive_sender_binding_tag(sk, tx_binding_hash),
-        cred_issuer,
-        cred_expiry,
-        cred_secret,
+        att_root_0: [0u32; 4],
+        att_root_1: [0u32; 4],
+        pub_accumulator_root: [0u32; 4],
         note_path_0: parse_merkle_path(note_path_0_flat),
         note_path_1: parse_merkle_path(note_path_1_flat),
-        cred_path: parse_merkle_path(cred_path_flat),
     };
 
     // Prove
@@ -453,7 +436,7 @@ pub fn prove_and_verify(
     let null_1 = pd.null_1;
     let out_cm_0 = pd.out_cm_0;
     let out_cm_1 = pd.out_cm_1;
-    let cred_null = pd.cred_null;
+    let accumulator_root = pd.accumulator_root;
 
     // Serialize proof for independent verification
     let serialized = serde_json::to_string(&proof_result.proof).unwrap_or_else(|_| String::new());
@@ -473,10 +456,9 @@ pub fn prove_and_verify(
             null_1,
             out_cm_0,
             out_cm_1,
-            cred_null,
+            accumulator_root,
             proof_bytes,
             note_root: witness.note_root,
-            cred_root: witness.cred_root,
             epoch: witness.epoch,
             log_num_rows,
         },
@@ -489,10 +471,9 @@ pub fn prove_and_verify(
             null_1: [0; 4],
             out_cm_0: [0; 4],
             out_cm_1: [0; 4],
-            cred_null: [0; 4],
+            accumulator_root: [0; 4],
             proof_bytes: String::new(),
             note_root: [0; 4],
-            cred_root: [0; 4],
             epoch: 0,
             log_num_rows: 0,
         },
@@ -929,9 +910,6 @@ pub fn build_witness_and_prove(
     out_amt_0: f64,
     out_owner_0: &[u32],
     out_amt_1: f64,
-    cred_issuer: u32,
-    cred_expiry: u32,
-    cred_secret: u32,
 ) -> ProofOutput {
     use stwo::core::fields::m31::M31;
 
@@ -960,7 +938,6 @@ pub fn build_witness_and_prove(
     };
 
     // Generate per-transaction randomness from the browser RNG bridge.
-    // This keeps the demo from reusing deterministic commitment blinding values.
     let in_rand_0 = demo_random_u32();
     let in_rand_1 = demo_random_u32();
     let out_rand_0 = demo_random_u32();
@@ -969,10 +946,14 @@ pub fn build_witness_and_prove(
     // Derive owner
     let owner = poseidon2::derive_owner(M31::from(sk));
     let asset = M31::from(in_asset);
+    // Unregulated notes: all-zeros attestation_root sentinel
+    let att_root_zero = [M31::from(0u32); 4];
 
-    // Compute note commitments (7-input: asset, a0, a1, a2, a3, owner, randomness)
-    let cm0 = poseidon2::note_commitment_u64(asset, in_amt_0, owner, M31::from(in_rand_0));
-    let cm1 = poseidon2::note_commitment_u64(asset, in_amt_1, owner, M31::from(in_rand_1));
+    // Compute note commitments (14-input: includes att_root)
+    let cm0 =
+        poseidon2::note_commitment_u64(asset, in_amt_0, owner, M31::from(in_rand_0), att_root_zero);
+    let cm1 =
+        poseidon2::note_commitment_u64(asset, in_amt_1, owner, M31::from(in_rand_1), att_root_zero);
 
     // Build note Merkle tree and extract paths
     let mut note_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
@@ -992,25 +973,7 @@ pub fn build_witness_and_prove(
         note_path_1[i] = (poseidon2::hashout_to_u32_array(*sib), *dir);
     }
 
-    // Compute credential commitment and tree
-    let issuer_id = poseidon2::derive_issuer_id(M31::from(cred_issuer));
-    let cred_cm = poseidon2::credential_commitment(
-        issuer_id,
-        owner,
-        M31::from(cred_expiry),
-        M31::from(cred_secret),
-    );
-    let mut cred_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
-    cred_tree.set_leaf(0, cred_cm);
-    let cred_root = poseidon2::hashout_to_u32_array(cred_tree.root());
-
-    let cred_path_pairs = cred_tree.path(0);
-    let mut cred_path = [([0u32; 4], 0u32); MERKLE_DEPTH];
-    for (i, (sib, dir)) in cred_path_pairs.iter().enumerate() {
-        cred_path[i] = (poseidon2::hashout_to_u32_array(*sib), *dir);
-    }
-
-    // Assemble witness (u64 amounts passed to binding hash)
+    // Assemble witness
     let tx_binding_hash = compute_mode_a_tx_binding_hash(
         PAYMENT_TX_V1_REPLAY_DOMAIN,
         in_asset,
@@ -1027,7 +990,6 @@ pub fn build_witness_and_prove(
     let witness = crate::types::PaymentWitness {
         epoch,
         note_root,
-        cred_root,
         sk,
         in_asset,
         in_amt_0,
@@ -1047,12 +1009,11 @@ pub fn build_witness_and_prove(
         replay_domain: PAYMENT_TX_V1_REPLAY_DOMAIN,
         tx_binding_hash,
         sender_binding_tag: derive_sender_binding_tag(sk, tx_binding_hash),
-        cred_issuer,
-        cred_expiry,
-        cred_secret,
+        att_root_0: [0u32; 4],
+        att_root_1: [0u32; 4],
+        pub_accumulator_root: [0u32; 4],
         note_path_0,
         note_path_1,
-        cred_path,
     };
 
     // Prove
@@ -1068,7 +1029,7 @@ pub fn build_witness_and_prove(
     let null_1 = pd.null_1;
     let out_cm_0 = pd.out_cm_0;
     let out_cm_1 = pd.out_cm_1;
-    let cred_null = pd.cred_null;
+    let accumulator_root = pd.accumulator_root;
 
     // Serialize proof for independent verification
     let serialized = serde_json::to_string(&proof_result.proof).unwrap_or_else(|_| String::new());
@@ -1087,10 +1048,9 @@ pub fn build_witness_and_prove(
             null_1,
             out_cm_0,
             out_cm_1,
-            cred_null,
+            accumulator_root,
             proof_bytes,
             note_root: witness.note_root,
-            cred_root: witness.cred_root,
             epoch: witness.epoch,
             log_num_rows,
         },
@@ -1103,10 +1063,9 @@ pub fn build_witness_and_prove(
             null_1: [0; 4],
             out_cm_0: [0; 4],
             out_cm_1: [0; 4],
-            cred_null: [0; 4],
+            accumulator_root: [0; 4],
             proof_bytes: String::new(),
             note_root: [0; 4],
-            cred_root: [0; 4],
             epoch: 0,
             log_num_rows: 0,
         },
@@ -1123,13 +1082,12 @@ pub fn build_witness_and_prove(
 pub fn verify_serialized_proof(
     proof_b64: &str,
     note_root: &[u32],
-    cred_root: &[u32],
+    accumulator_root: &[u32],
     epoch: u32,
     null_0: &[u32],
     null_1: &[u32],
     out_cm_0: &[u32],
     out_cm_1: &[u32],
-    cred_null: &[u32],
     tx_binding_hash: &[u32],
     sender_binding_tag: &[u32],
     log_num_rows: u32,
@@ -1153,7 +1111,7 @@ pub fn verify_serialized_proof(
         Ok(v) => v,
         Err(e) => return e,
     };
-    let cred_root = match to_arr(cred_root, "cred_root") {
+    let accumulator_root = match to_arr(accumulator_root, "accumulator_root") {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -1170,10 +1128,6 @@ pub fn verify_serialized_proof(
         Err(e) => return e,
     };
     let out_cm_1 = match to_arr(out_cm_1, "out_cm_1") {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let cred_null = match to_arr(cred_null, "cred_null") {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -1206,14 +1160,13 @@ pub fn verify_serialized_proof(
     let public_data = PaymentPublicData {
         epoch,
         note_root,
-        cred_root,
+        accumulator_root,
         tx_binding_hash,
         sender_binding_tag,
         null_0,
         null_1,
         out_cm_0,
         out_cm_1,
-        cred_null,
     };
 
     // log_num_rows is provided by the caller (stored in the receipt from the prover).
@@ -1322,8 +1275,12 @@ pub fn compute_note_root(
 
     let owner = poseidon2::derive_owner(M31::from(sk));
     let asset = M31::from(in_asset);
-    let cm0 = poseidon2::note_commitment_u64(asset, in_amt_0, owner, M31::from(in_rand_0));
-    let cm1 = poseidon2::note_commitment_u64(asset, in_amt_1, owner, M31::from(in_rand_1));
+    // Unregulated notes: all-zeros attestation_root sentinel
+    let att_root_zero = [M31::from(0u32); 4];
+    let cm0 =
+        poseidon2::note_commitment_u64(asset, in_amt_0, owner, M31::from(in_rand_0), att_root_zero);
+    let cm1 =
+        poseidon2::note_commitment_u64(asset, in_amt_1, owner, M31::from(in_rand_1), att_root_zero);
     let mut tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
     tree.set_leaf(0, cm0);
     tree.set_leaf(1, cm1);

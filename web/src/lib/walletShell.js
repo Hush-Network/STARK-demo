@@ -204,7 +204,6 @@ export function renderBalanceCard(state, opts = {}) {
       <div class="balance-meta">
         <div class="identity">
           <h1 class="identity-name">${esc(userHandle)}</h1>
-          <span class="pill-private">${svg.lock()} Private</span>
           <div class="identity-sub">
             <span>Verified Hush identity</span>
             <span class="dotsep">·</span>

@@ -19,7 +19,6 @@ struct LedgerState {
     cred_tree: poseidon2::SparseMerkleTree,
     issuer_tree: poseidon2::SparseMerkleTree,
     nullifier_set: HashSet<[u32; 4]>,
-    cred_nullifier_set: HashSet<[u32; 4]>,
     next_note_idx: usize,
 }
 
@@ -30,7 +29,6 @@ impl LedgerState {
             cred_tree: poseidon2::SparseMerkleTree::new(MERKLE_DEPTH),
             issuer_tree: poseidon2::SparseMerkleTree::new(MERKLE_DEPTH),
             nullifier_set: HashSet::new(),
-            cred_nullifier_set: HashSet::new(),
             next_note_idx: 0,
         }
     }
@@ -58,12 +56,12 @@ impl LedgerState {
         poseidon2::hashout_to_u32_array(self.cred_tree.root())
     }
 
+    /// Apply a payment: check note root, reject double-spends, record nullifiers.
+    /// The credential gate has been removed from the payment circuit (v1 compliance
+    /// model). Provenance continuity is enforced circuit-side via att_root matching.
     fn apply_payment(&mut self, public_data: &circuit::PaymentPublicData) -> Result<(), String> {
         if public_data.note_root != self.note_root_u32() {
             return Err("Note root mismatch".to_string());
-        }
-        if public_data.cred_root != self.cred_root_u32() {
-            return Err("Credential root mismatch".to_string());
         }
         if self.nullifier_set.contains(&public_data.null_0) {
             return Err(format!("Double-spend: nullifier {:?} already spent", public_data.null_0));
@@ -71,15 +69,8 @@ impl LedgerState {
         if self.nullifier_set.contains(&public_data.null_1) {
             return Err(format!("Double-spend: nullifier {:?} already spent", public_data.null_1));
         }
-        if self.cred_nullifier_set.contains(&public_data.cred_null) {
-            return Err(format!(
-                "Credential nullifier {:?} already used this epoch",
-                public_data.cred_null
-            ));
-        }
         self.nullifier_set.insert(public_data.null_0);
         self.nullifier_set.insert(public_data.null_1);
-        self.cred_nullifier_set.insert(public_data.cred_null);
         Ok(())
     }
 }
@@ -108,14 +99,9 @@ fn build_payment_witness(
     out_rand_0: u32,
     out_amt_1: u64,
     out_rand_1: u32,
-    cred_issuer: u32,
-    cred_expiry: u32,
-    cred_secret: u32,
-    cred_idx: usize,
 ) -> PaymentWitness {
     let note_path_0 = path_to_u32(&ledger.note_tree.path(in_idx_0));
     let note_path_1 = path_to_u32(&ledger.note_tree.path(in_idx_1));
-    let cred_path = path_to_u32(&ledger.cred_tree.path(cred_idx));
 
     let tx_binding_hash = compute_mode_a_tx_binding_hash(
         PAYMENT_TX_V1_REPLAY_DOMAIN,
@@ -131,10 +117,12 @@ fn build_payment_witness(
         out_rand_1,
     );
 
+    // Demo notes are unregulated: attestation_root = all-zeros sentinel.
+    let att_root_zero = [0u32; 4];
+
     PaymentWitness {
         epoch,
         note_root: ledger.note_root_u32(),
-        cred_root: ledger.cred_root_u32(),
         sk,
         in_asset,
         in_amt_0,
@@ -154,12 +142,11 @@ fn build_payment_witness(
         replay_domain: PAYMENT_TX_V1_REPLAY_DOMAIN,
         tx_binding_hash,
         sender_binding_tag: derive_sender_binding_tag(sk, tx_binding_hash),
-        cred_issuer,
-        cred_expiry,
-        cred_secret,
+        att_root_0: att_root_zero,
+        att_root_1: att_root_zero,
+        pub_accumulator_root: att_root_zero,
         note_path_0,
         note_path_1,
-        cred_path,
     }
 }
 
@@ -230,10 +217,24 @@ fn main() {
     );
 
     // --- Step 3: Create initial notes for Alice ---
+    // Unregulated demo notes: att_root = all-zeros sentinel (5th arg).
     println!("\nStep 3: Create initial notes for Alice");
     let asset = M31::from(1u32);
-    let note_0 = poseidon2::note_commitment_u64(asset, 7000u64, alice_owner, M31::from(111u32));
-    let note_1 = poseidon2::note_commitment_u64(asset, 3000u64, alice_owner, M31::from(222u32));
+    let att_root_zero = [M31::from(0u32); 4];
+    let note_0 = poseidon2::note_commitment_u64(
+        asset,
+        7000u64,
+        alice_owner,
+        M31::from(111u32),
+        att_root_zero,
+    );
+    let note_1 = poseidon2::note_commitment_u64(
+        asset,
+        3000u64,
+        alice_owner,
+        M31::from(222u32),
+        att_root_zero,
+    );
     let idx_0 = ledger.add_note(note_0);
     let idx_1 = ledger.add_note(note_1);
     println!("  Note {}: 7000 units (cm: {})", idx_0, fmt_hashout_m31(note_0));
@@ -260,10 +261,6 @@ fn main() {
         333,
         2000,
         444,
-        issuer_key,
-        cred_expiry,
-        cred_secret,
-        0,
     );
 
     print!("  Proving payment... ");
@@ -280,7 +277,7 @@ fn main() {
     println!("    Nullifier 1: {}", fmt_hashout(&result_1.public_data.null_1));
     println!("    Output cm 0 (Bob): {}", fmt_hashout(&result_1.public_data.out_cm_0));
     println!("    Output cm 1 (change): {}", fmt_hashout(&result_1.public_data.out_cm_1));
-    println!("    Credential nullifier: {}", fmt_hashout(&result_1.public_data.cred_null));
+    println!("    Accumulator root: {}", fmt_hashout(&result_1.public_data.accumulator_root));
 
     ledger.apply_payment(&result_1.public_data).expect("Ledger rejected payment");
 
@@ -299,11 +296,10 @@ fn main() {
     // --- Step 5: Second payment (Alice spends her change) ---
     // Alice's change note is at change_idx. She needs a second note -- use a zero-value dummy.
     println!("\nStep 5: Second payment (Alice spends 2000 change -> 1500 + 500)");
-    let dummy_note = poseidon2::note_commitment_u64(asset, 0u64, alice_owner, M31::from(555u32));
+    let dummy_note =
+        poseidon2::note_commitment_u64(asset, 0u64, alice_owner, M31::from(555u32), att_root_zero);
     let dummy_idx = ledger.add_note(dummy_note);
 
-    // Reset credential nullifier set for new epoch
-    ledger.cred_nullifier_set.clear();
     let epoch_2 = 1001u32;
 
     let witness_2 = build_payment_witness(
@@ -322,10 +318,6 @@ fn main() {
         666,
         500,
         777,
-        issuer_key,
-        cred_expiry,
-        cred_secret,
-        0,
     );
 
     print!("  Proving second payment... ");
@@ -340,6 +332,8 @@ fn main() {
     println!("  Second spend accepted. Nullifiers: {}", ledger.nullifier_set.len());
 
     // --- Step 6: Time-window audit (CIRCUIT 3) ---
+    // The time-window circuit retains the credential gate for selective disclosure
+    // proofs -- the prover binds the audit window to their credential.
     println!("\nStep 6: Time-window audit circuit");
     println!("  Alice proves aggregate spend over epoch window without revealing individual txs");
 
@@ -385,7 +379,7 @@ fn main() {
     println!("\n=== Protocol Lifecycle Complete ===");
     println!("Demonstrated:");
     println!("  1. Credential issuance (issuer authorization via Merkle proof)");
-    println!("  2. First payment (2-in-2-out with proof-level credential check)");
+    println!("  2. First payment (2-in-2-out, provenance continuity enforced circuit-side)");
     println!("  3. Second payment (spending change output, state continuity)");
     println!("  4. Time-window audit (aggregate disclosure without individual tx reveal)");
     println!("  5. Double-spend rejection (nullifier set enforcement)");

@@ -300,8 +300,9 @@ pub(crate) fn hash2(a: M31, b: M31) -> HashOut {
     squeeze(&state)
 }
 
-// Note commitment with 4-limb amount encoding.
-// Preimage: (asset, a0, a1, a2, a3, owner[0..4], randomness) = 10 inputs → 2 sponge blocks.
+// Note commitment with 4-limb amount encoding and provenance attestation root.
+// Preimage: (asset, a0, a1, a2, a3, owner[0..4], randomness, att_root[0..4]) = 14 inputs → 2 sponge blocks.
+// For unregulated notes, pass att_root = HASH_ZERO ([M31(0); 4]).
 pub fn note_commitment(
     asset: M31,
     a0: M31,
@@ -310,15 +311,38 @@ pub fn note_commitment(
     a3: M31,
     owner: HashOut,
     randomness: M31,
+    att_root: HashOut,
 ) -> HashOut {
     sponge_hash(
-        &[asset, a0, a1, a2, a3, owner[0], owner[1], owner[2], owner[3], randomness],
+        &[
+            asset,
+            a0,
+            a1,
+            a2,
+            a3,
+            owner[0],
+            owner[1],
+            owner[2],
+            owner[3],
+            randomness,
+            att_root[0],
+            att_root[1],
+            att_root[2],
+            att_root[3],
+        ],
         DOMAIN_NOTE_CM,
     )
 }
 
 /// Convenience wrapper: decompose a u64 amount into 4 limbs and compute note commitment.
-pub fn note_commitment_u64(asset: M31, amount: u64, owner: HashOut, randomness: M31) -> HashOut {
+/// For unregulated notes, pass att_root = HASH_ZERO.
+pub fn note_commitment_u64(
+    asset: M31,
+    amount: u64,
+    owner: HashOut,
+    randomness: M31,
+    att_root: HashOut,
+) -> HashOut {
     let limbs = crate::types::amount_to_limbs(amount);
     note_commitment(
         asset,
@@ -328,6 +352,7 @@ pub fn note_commitment_u64(asset: M31, amount: u64, owner: HashOut, randomness: 
         M31::from(limbs[3]),
         owner,
         randomness,
+        att_root,
     )
 }
 
@@ -750,15 +775,41 @@ mod tests {
         // Changing any single input to note_commitment changes the output
         let owner_a = derive_owner(M31::from(50u32));
         let owner_b = derive_owner(M31::from(51u32));
-        let base = note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(999u32));
+        let att_root_a = [M31(1), M31(2), M31(3), M31(4)];
+        let att_root_b = [M31(5), M31(6), M31(7), M31(8)];
+        let base =
+            note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(999u32), HASH_ZERO);
         // Change asset
-        assert_ne!(base, note_commitment_u64(M31::from(2u32), 100u64, owner_a, M31::from(999u32)));
+        assert_ne!(
+            base,
+            note_commitment_u64(M31::from(2u32), 100u64, owner_a, M31::from(999u32), HASH_ZERO)
+        );
         // Change amount
-        assert_ne!(base, note_commitment_u64(M31::from(1u32), 101u64, owner_a, M31::from(999u32)));
+        assert_ne!(
+            base,
+            note_commitment_u64(M31::from(1u32), 101u64, owner_a, M31::from(999u32), HASH_ZERO)
+        );
         // Change owner
-        assert_ne!(base, note_commitment_u64(M31::from(1u32), 100u64, owner_b, M31::from(999u32)));
+        assert_ne!(
+            base,
+            note_commitment_u64(M31::from(1u32), 100u64, owner_b, M31::from(999u32), HASH_ZERO)
+        );
         // Change blinding
-        assert_ne!(base, note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(998u32)));
+        assert_ne!(
+            base,
+            note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(998u32), HASH_ZERO)
+        );
+        // Change attestation root
+        assert_ne!(
+            base,
+            note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(999u32), att_root_a)
+        );
+        // Two distinct att_roots produce different commitments
+        let with_a =
+            note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(999u32), att_root_a);
+        let with_b =
+            note_commitment_u64(M31::from(1u32), 100u64, owner_a, M31::from(999u32), att_root_b);
+        assert_ne!(with_a, with_b);
     }
 
     #[test]
@@ -888,8 +939,9 @@ mod tests {
     #[test]
     fn test_note_commitment() {
         let owner = derive_owner(M31::from(9999u32));
-        let cm = note_commitment_u64(M31::from(1u32), 7000u64, owner, M31::from(111u32));
-        let cm2 = note_commitment_u64(M31::from(1u32), 7000u64, owner, M31::from(111u32));
+        let cm = note_commitment_u64(M31::from(1u32), 7000u64, owner, M31::from(111u32), HASH_ZERO);
+        let cm2 =
+            note_commitment_u64(M31::from(1u32), 7000u64, owner, M31::from(111u32), HASH_ZERO);
         assert_eq!(cm, cm2);
     }
 
@@ -1028,12 +1080,12 @@ mod proptests {
         ) {
             let owner = derive_owner(M31::from(owner_sk));
             let base = note_commitment_u64(
-                M31::from(asset), u64::from(amt), owner, M31::from(rand),
+                M31::from(asset), u64::from(amt), owner, M31::from(rand), HASH_ZERO,
             );
             // Changing asset must change the output
             let c1 = note_commitment_u64(
                 M31::from(asset.wrapping_add(1) % ((1u32 << 31) - 1)),
-                u64::from(amt), owner, M31::from(rand),
+                u64::from(amt), owner, M31::from(rand), HASH_ZERO,
             );
             prop_assert_ne!(base, c1);
         }

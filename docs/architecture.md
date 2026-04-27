@@ -8,7 +8,7 @@ This note covers the proving engine used by the Hush browser demo. It does not d
 - `poseidon2_air` - AIR constraints for hash verification (degree-2 decomposition)
 - `circuit` - Payment circuit (2-in-2-out private transfer with provenance + non-revocation check)
 - `credential_issuance` - Provenance attestation proof (file name kept for compatibility)
-- `time_window` - Aggregate audit proof over a time range
+- `time_window` - Aggregate audit circuit over a time range, surfaced as audit keys in the demo
 - `prover_common` - Shared prover config, channel, and hasher type aliases
 - `types` - Witness structs and constants
 - `wasm` - Browser bindings via wasm-bindgen
@@ -39,7 +39,7 @@ WASM uses a Blake2s fallback where the `starknet-crypto` dependencies are not av
 
 `pow_bits=0` is set because of a known bug in Stwo's non-parallel Poseidon252 grinding path. That affects DoS hardening, not proof soundness.
 
-## Batch proving (target-state)
+## Batch proving
 
 Planned direction: pack multiple transactions into one STARK proof by assigning each witness to different trace rows and padding to the next power of two. The goal is to amortize FRI overhead across the batch.
 

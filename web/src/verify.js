@@ -81,8 +81,8 @@ async function verify() {
     return;
   }
 
-  // Route: audit proof or payment receipt?
-  if (receipt.type === 'hush-audit-proof' && receipt.proof && receipt.proof.proof_bytes) {
+  // Route: audit key or payment receipt?
+  if ((receipt.type === 'hush-audit-key' || receipt.type === 'hush-audit-proof') && receipt.proof && receipt.proof.proof_bytes) {
     return verifyAuditProof(receipt);
   }
 
@@ -283,7 +283,7 @@ function showError(msg) {
 async function verifyAuditProof(receipt) {
   const p = receipt.proof;
   if (!p || !p.proof_bytes || !p.cred_root || !p.cred_null) {
-    showError('Audit proof is missing required fields (proof_bytes, cred_root, cred_null).');
+    showError('Audit key is missing required fields (proof_bytes, cred_root, cred_null).');
     return;
   }
 
@@ -319,10 +319,10 @@ async function verifyAuditProof(receipt) {
 
   if (verified) {
     banner.className = 'result-banner valid';
-    banner.textContent = '\u2713 Audit proof verified. STARK proof is valid.';
+    banner.textContent = '\u2713 Audit key verified. STARK proof is valid.';
   } else {
     banner.className = 'result-banner invalid';
-    banner.textContent = '\u2717 Audit verification failed. ' + (error || 'Unknown error.');
+    banner.textContent = '\u2717 Audit key verification failed. ' + (error || 'Unknown error.');
   }
 
   const scale = receipt.amt_scale || 0;
@@ -336,7 +336,7 @@ async function verifyAuditProof(receipt) {
   }
 
   html += '<div class="result-section">Proven Statement (cryptographically verified)</div>';
-  html += row('Proof type', 'Time-window audit');
+  html += row('Proof type', 'Audit key');
   html += row('Window', `${esc(receipt.window?.start_date || '')} to ${esc(receipt.window?.end_date || '')}`);
   if (p.claimed_total != null) {
     html += row('Total volume', fmtBoundAmount(p.claimed_total, scale));

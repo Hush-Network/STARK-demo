@@ -37,7 +37,6 @@ pub fn limbs_to_amount(limbs: [u32; NUM_LIMBS]) -> u64 {
 pub struct PaymentWitness {
     pub epoch: u32,
     pub note_root: [u32; 4],
-    pub cred_root: [u32; 4],
     pub sk: u32,
     pub in_asset: u32,
     pub in_amt_0: u64,
@@ -57,13 +56,15 @@ pub struct PaymentWitness {
     pub replay_domain: u32,
     pub tx_binding_hash: [u32; 4],
     pub sender_binding_tag: [u32; 4],
-    pub cred_issuer: u32,
-    pub cred_expiry: u32,
-    pub cred_secret: u32,
+    /// Attestation root for input note 0. [0u32; 4] = unregulated.
+    pub att_root_0: [u32; 4],
+    /// Attestation root for input note 1. [0u32; 4] = unregulated.
+    pub att_root_1: [u32; 4],
+    /// Public provenance accumulator root (mixed into the proof channel).
+    pub pub_accumulator_root: [u32; 4],
 
     pub note_path_0: [([u32; 4], u32); MERKLE_DEPTH],
     pub note_path_1: [([u32; 4], u32); MERKLE_DEPTH],
-    pub cred_path: [([u32; 4], u32); MERKLE_DEPTH],
 }
 
 #[derive(Clone, Debug)]

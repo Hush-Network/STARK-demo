@@ -432,12 +432,29 @@ fn gen_trace(
     let ch_m31: [M31; NUM_LIMBS] = core::array::from_fn(|i| M31::from(ch_limbs[i]));
     let fee_m31: [M31; NUM_LIMBS] = core::array::from_fn(|i| M31::from(fee_limbs[i]));
 
-    // Note commitments with 10 inputs: (asset, a0-a3, owner[0..4], randomness) -> 2-block sponge
+    // HUSH fee notes are always unregulated: attestation_root = all-zeros sentinel.
+    let att_root_zero: HashOut = [M31::from(0u32); 4];
+
+    // Note commitments with 14 inputs: (asset, a0-a3, owner[0..4], randomness, ar[0..4])
     let in_cm_0: HashOut = poseidon2::note_commitment(
-        hush_asset, in0_m31[0], in0_m31[1], in0_m31[2], in0_m31[3], owner, in_rand_0,
+        hush_asset,
+        in0_m31[0],
+        in0_m31[1],
+        in0_m31[2],
+        in0_m31[3],
+        owner,
+        in_rand_0,
+        att_root_zero,
     );
     let in_cm_1: HashOut = poseidon2::note_commitment(
-        hush_asset, in1_m31[0], in1_m31[1], in1_m31[2], in1_m31[3], owner, in_rand_1,
+        hush_asset,
+        in1_m31[0],
+        in1_m31[1],
+        in1_m31[2],
+        in1_m31[3],
+        owner,
+        in_rand_1,
+        att_root_zero,
     );
     let null_0: HashOut = poseidon2::nullifier(sk, in_cm_0);
     let null_1: HashOut = poseidon2::nullifier(sk, in_cm_1);
@@ -449,6 +466,7 @@ fn gen_trace(
         ch_m31[3],
         owner,
         change_rand,
+        att_root_zero,
     );
     let pub_note_root: HashOut = poseidon2::u32_array_to_hashout(witness.note_root);
 
@@ -665,17 +683,21 @@ fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, Strin
     let sk = M31::from(witness.sk);
     let owner: HashOut = poseidon2::derive_owner(sk);
     let hush_asset = M31::from(AssetId::Hush as u32);
+    // HUSH fee notes are always unregulated: attestation_root = all-zeros sentinel.
+    let att_root_zero: HashOut = [M31::from(0u32); 4];
     let in_cm_0: HashOut = poseidon2::note_commitment_u64(
         hush_asset,
         witness.in_amt_0,
         owner,
         M31::from(witness.in_rand_0),
+        att_root_zero,
     );
     let in_cm_1: HashOut = poseidon2::note_commitment_u64(
         hush_asset,
         witness.in_amt_1,
         owner,
         M31::from(witness.in_rand_1),
+        att_root_zero,
     );
 
     let note_root: HashOut = poseidon2::u32_array_to_hashout(witness.note_root);
@@ -697,6 +719,7 @@ fn validate_witness(witness: &HushFeeWitness) -> Result<HushFeePublicData, Strin
         witness.change_amt,
         owner,
         M31::from(witness.change_rand),
+        att_root_zero,
     );
 
     Ok(HushFeePublicData {

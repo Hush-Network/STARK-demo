@@ -23,18 +23,22 @@ type NoteMerkleContext =
 fn build_note_context(sk: u32, asset: AssetId, inputs: [NoteInput; 2]) -> NoteMerkleContext {
     let owner = poseidon2::derive_owner(M31::from(sk));
     let asset = M31::from(asset.as_u32());
+    // Fixture notes are unregulated: attestation_root is all-zeros sentinel.
+    let att_root_zero = [M31::from(0u32); 4];
 
     let in_cm_0 = poseidon2::note_commitment_u64(
         asset,
         inputs[0].amount,
         owner,
         M31::from(inputs[0].randomness),
+        att_root_zero,
     );
     let in_cm_1 = poseidon2::note_commitment_u64(
         asset,
         inputs[1].amount,
         owner,
         M31::from(inputs[1].randomness),
+        att_root_zero,
     );
     let mut note_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
     note_tree.set_leaf(0, in_cm_0);
@@ -58,39 +62,20 @@ pub fn build_payment_merkle_context(
     sk: u32,
     payment_inputs: [NoteInput; 2],
     payment_asset: AssetId,
-    cred_issuer: u32,
-    cred_expiry: u32,
-    cred_secret: u32,
     epoch: u32,
 ) -> PaymentMerkleContext {
     let (note_root, note_path_0, note_path_1) =
         build_note_context(sk, payment_asset, payment_inputs);
-    let owner = poseidon2::derive_owner(M31::from(sk));
-    let issuer_id = poseidon2::derive_issuer_id(M31::from(cred_issuer));
-    let cred_cm = poseidon2::credential_commitment(
-        issuer_id,
-        owner,
-        M31::from(cred_expiry),
-        M31::from(cred_secret),
-    );
-    let mut cred_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
-    cred_tree.set_leaf(0, cred_cm);
-    let cred_path_vec = cred_tree.path(0);
-    let mut cred_path = [([0u32; 4], 0u32); MERKLE_DEPTH];
-    for i in 0..MERKLE_DEPTH {
-        cred_path[i] = (poseidon2::hashout_to_u32_array(cred_path_vec[i].0), cred_path_vec[i].1);
-    }
 
     PaymentMerkleContext {
         epoch,
         note_root,
-        cred_root: poseidon2::hashout_to_u32_array(cred_tree.root()),
-        cred_issuer,
-        cred_expiry,
-        cred_secret,
+        // Fixture: unregulated notes and empty accumulator (all-zeros sentinels).
+        accumulator_root: [0u32; 4],
+        att_root_0: [0u32; 4],
+        att_root_1: [0u32; 4],
         note_path_0,
         note_path_1,
-        cred_path,
     }
 }
 
@@ -110,9 +95,6 @@ fn build_context(
     sender_change_randomness: u32,
     hush_inputs: Option<[NoteInput; 2]>,
     hush_change_randomness: Option<u32>,
-    cred_issuer: u32,
-    cred_expiry: u32,
-    cred_secret: u32,
     epoch: u32,
 ) -> PaymentFixtureContext {
     // Derive the recipient's owner hash from the fixture scalar
@@ -144,15 +126,7 @@ fn build_context(
     }
     .expect("fixture tx should build");
 
-    let payment_context = build_payment_merkle_context(
-        sk,
-        payment_inputs,
-        payment_asset,
-        cred_issuer,
-        cred_expiry,
-        cred_secret,
-        epoch,
-    );
+    let payment_context = build_payment_merkle_context(sk, payment_inputs, payment_asset, epoch);
     let witness = tx.build_witness(sk, &payment_context).expect("fixture witness should build");
 
     let fee_sidecar_witness = match (route, hush_inputs, hush_change_randomness) {
@@ -197,9 +171,6 @@ pub fn valid_usdc_same_asset_fixture() -> PaymentFixtureContext {
         444,
         None,
         None,
-        1,
-        2_000,
-        777,
         1_000,
     )
 }
@@ -219,9 +190,6 @@ pub fn valid_usdt_same_asset_fixture() -> PaymentFixtureContext {
         888,
         None,
         None,
-        1,
-        2_000,
-        999,
         1_000,
     )
 }
@@ -244,9 +212,6 @@ pub fn valid_usdc_hush_fee_fixture() -> PaymentFixtureContext {
             NoteInput { amount: 20, randomness: 616 },
         ]),
         Some(717),
-        1,
-        2_000,
-        818,
         1_000,
     )
 }
@@ -269,9 +234,6 @@ pub fn valid_usdt_hush_fee_fixture() -> PaymentFixtureContext {
             NoteInput { amount: 15, randomness: 1_020 },
         ]),
         Some(1_121),
-        1,
-        2_000,
-        1_222,
         1_000,
     )
 }

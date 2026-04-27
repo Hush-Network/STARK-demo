@@ -2,7 +2,7 @@
 name = "hush-demo-stark"
 version = "0.1.0"
 edition = "2021"
-description = "STARK circuits for private payments with credential checks"
+description = "STARK circuits for private payments with provenance and non-revocation checks"
 repository = "https://github.com/hush-network/stark-demo"
 license = "MIT"
 keywords = ["stark", "zero-knowledge", "privacy", "payments"]

@@ -12,7 +12,7 @@ Built on [Stwo](https://github.com/starkware-libs/stwo) (FRI-based STARK prover,
 
 The live demo opens directly into the intended HushPay wallet experience: the sender sees amount, fee route, and total debit up front while the receiver gets the full payment amount.
 
-This repository provides the proof engine underneath that experience: payment validity, provenance and non-revocation checks, audit proofs, and receipt verification. Wallet funding, boundary-issued provenance attestations, and live network submission remain represented in the demo.
+This repository provides the proof engine underneath that experience: payment validity, provenance and non-revocation checks, audit key generation, and receipt verification. Wallet funding, boundary-issued provenance attestations, and live network submission remain represented in the demo.
 
 ## Status boundary
 
@@ -27,7 +27,7 @@ This repository provides the proof engine underneath that experience: payment va
 - Browser WASM timings for the payment circuit
 - Trace layout and circuit size estimates
 
-**Target-state**
+**Broader Hush architecture**
 - Recursive proof aggregation
 - HotStuff-2 BFT consensus
 - Threshold-encrypted mempool
@@ -46,7 +46,7 @@ This repository provides the proof engine underneath that experience: payment va
 |---------|----------------|
 | Payment | The sender owns the input notes, the note's provenance attestation is valid, the lineage is not in the revocation accumulator, and the amounts balance. Sender, receiver, and amount stay hidden. |
 | Provenance Attestation | The note carries a valid attestation signed by a screened boundary actor (exchange, bridge, issuer, PSP, merchant) at entry. |
-| Time-Window Audit | This wallet transacted a specific total volume between two timestamps, without revealing individual transactions. |
+| Time-Window Audit | This wallet transacted a specific total volume between two timestamps, surfaced to the user as an audit key, without revealing individual transactions. |
 
 ## Circuits
 
@@ -85,7 +85,7 @@ Public outputs bound via Fiat-Shamir: nullifiers, output commitments, lineage ma
 
 ### Browser (WASM)
 
-The live demo at demo.hushnetwork.io runs the full prover in the browser via WebAssembly. Measured in Chrome on AMD Ryzen 9:
+The live demo at demo.hushnetwork.io runs the full prover in the browser via WebAssembly. The latest separately measured Chrome average on AMD Ryzen 9 remains:
 
 | Circuit             | Prove (avg) |
 |---------------------|-------------|
@@ -95,37 +95,37 @@ WASM uses Blake2s for the Merkle commitment backend (no SIMD Poseidon252 in brow
 
 ### Native (single-threaded)
 
-AMD Ryzen 9, release build. 10 iterations per circuit.
+AMD Ryzen 9, release build. 10 iterations per circuit. Refreshed April 17, 2026.
 
 | Circuit             | Prove (avg) | Prove (min) | Prove (max) | Verify (avg) |
 |---------------------|-------------|-------------|-------------|--------------|
-| Payment             |     1010ms  |      960ms  |     1057ms  |       124ms  |
-| Mode A Bundle       |     1089ms  |     1035ms  |     1123ms  |       123ms  |
-| Mode B Bundle       |     1763ms  |     1666ms  |     1852ms  |       201ms  |
-| Provenance Attest.  |      269ms  |      265ms  |      273ms  |   (combined) |
-| Time-Window Audit   |      283ms  |      275ms  |      297ms  |   (combined) |
+| Payment             |    989.56ms |    594.92ms |   1775.58ms |    209.24ms |
+| Mode A Bundle       |    906.53ms |    761.08ms |   1042.06ms |    203.77ms |
+| Mode B Bundle       |   1168.48ms |   1054.78ms |   1289.20ms |    247.88ms |
+| Provenance Attest.  |    166.44ms |    154.22ms |    184.60ms |  (combined) |
+| Time-Window Audit   |    159.21ms |    143.67ms |    179.73ms |  (combined) |
 
 ### Native (parallel, --features parallel)
 
-Same hardware, multi-threaded via rayon. ~1.7x speedup on payment proving.
+Same hardware, multi-threaded via rayon. Refreshed April 17, 2026.
 
 | Circuit             | Prove (avg) | Prove (min) | Prove (max) | Verify (avg) |
 |---------------------|-------------|-------------|-------------|--------------|
-| Payment             |      593ms  |      513ms  |      651ms  |       124ms  |
-| Mode A Bundle       |      682ms  |      657ms  |      715ms  |       123ms  |
-| Mode B Bundle       |     1087ms  |     1014ms  |     1167ms  |       202ms  |
-| Provenance Attest.  |      145ms  |      142ms  |      148ms  |   (combined) |
-| Time-Window Audit   |      138ms  |      133ms  |      154ms  |   (combined) |
+| Payment             |    639.13ms |    561.35ms |    717.44ms |    127.75ms |
+| Mode A Bundle       |    709.91ms |    616.79ms |    779.50ms |    128.42ms |
+| Mode B Bundle       |   1066.88ms |   1001.91ms |   1109.74ms |    206.40ms |
+| Provenance Attest.  |    153.36ms |    142.47ms |    172.41ms |  (combined) |
+| Time-Window Audit   |    140.57ms |    130.47ms |    158.11ms |  (combined) |
 
-Mode A = same-asset fee. Mode B = HUSH sidecar fee (payment + fee sidecar proofs). Accounting, epoch accrual, and payout generation run in sub-microsecond time and are not shown. April 13, 2026.
+Mode A = same-asset fee. Mode B = HUSH sidecar fee (payment + fee sidecar proofs). Accounting, epoch accrual, and payout generation run in microseconds and are not shown. April 17, 2026.
 
-Recursive batching is a target-state optimization, not measured here. See [benchmarks/](benchmarks/) for the full breakdown.
+Recursive batching is a later proving path within the broader Hush architecture and is not measured here. See [benchmarks/](benchmarks/) for the full breakdown.
 
 Fixed-width amount encoding means payment size does not change the circuit shape within the supported amount range. That is why the browser demo can say something meaningful about large-value payment latency even before batching or recursion is implemented.
 
 ## Tests
 
-113 tests covering:
+116 tests covering:
 - Valid proof generation and verification for all three circuits
 - Balance conservation rejection (mismatched inputs/outputs)
 - Nullifier reuse rejection (double-spend prevention)
@@ -164,8 +164,9 @@ src/
 docs/
   architecture.md         Circuit architecture and proving notes
 benchmarks/
-  BENCHMARK_REPORT_2026-04-07.md  Latest benchmark run: WASM, native, and parallel results
-  BENCHMARK_REPORT_2026-04-02.md  Previous baseline (pre-multi-limb)
+  BENCHMARK_REPORT_2026-04-17.md  Latest benchmark run: native and parallel refresh, plus current WASM note
+  BENCHMARK_REPORT_2026-04-07.md  Prior benchmark snapshot
+  BENCHMARK_REPORT_2026-04-02.md  Earlier baseline (pre-multi-limb)
 ```
 
 ## Development
@@ -200,7 +201,7 @@ This crate is the proving engine for Hush Network. It does not implement:
 - Note discovery
 - Consumer wallet flows beyond the browser demo
 
-See [docs/architecture.md](docs/architecture.md) for circuit architecture notes and [benchmarks/BENCHMARK_REPORT_2026-04-07.md](benchmarks/BENCHMARK_REPORT_2026-04-07.md) for the full breakdown including WASM, single-threaded, and parallel native results.
+See [docs/architecture.md](docs/architecture.md) for circuit architecture notes and [benchmarks/BENCHMARK_REPORT_2026-04-17.md](benchmarks/BENCHMARK_REPORT_2026-04-17.md) for the current breakdown including WASM notes plus refreshed single-threaded and parallel native results.
 
 ## Prior art
 
