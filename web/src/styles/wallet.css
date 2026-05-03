@@ -1,9 +1,9 @@
 /* ============================================================================
  * Wallet shell stylesheet for stark-demo.
  *
- * Adds the HushPay wallet UI on top of the existing inline stylesheet in
- * index.html. Theme tokens are scoped to .app-root so legacy rules (composer,
- * overlays, splash, toasts) keep working with their existing tokens.
+ * Layered on top of styles/base.css (splash, composer overlays, modal sheets,
+ * toasts, font definitions). Theme tokens here are scoped to `.app-root` so
+ * the wallet shell tokens do not leak into the base layer.
  * ============================================================================ */
 
 /* ---------- Theme tokens (scoped to wallet shell) ---------- */

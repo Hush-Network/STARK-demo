@@ -1,4 +1,5 @@
-import './wallet.css';
+import './styles/base.css';
+import './styles/wallet.css';
 import init, {
   dual_fee_quote_payment_with_schedule_json,
   dual_fee_submit_demo_payment_json,
