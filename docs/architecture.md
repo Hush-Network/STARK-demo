@@ -7,10 +7,13 @@ This note covers the proving engine used by the Hush browser demo. It does not d
 - `poseidon2` - M31 permutation, commitments, Merkle trees
 - `poseidon2_air` - AIR constraints for hash verification (degree-2 decomposition)
 - `circuit` - Payment circuit (2-in-2-out private transfer with provenance + non-revocation check)
-- `credential_issuance` - Provenance attestation proof (file name kept for compatibility)
+- `provenance_attestation` - Provenance attestation proof
 - `time_window` - Aggregate audit circuit over a time range, surfaced as audit keys in the demo
+- `payment_tx` / `payment_validation` / `payment_fixtures` - canonical tx encoding, bundle validation, and shared fixtures
+- `fee_sidecar` / `dual_fee_runtime` - HUSH fee sidecar circuit and dual-fee runtime
+- `accounting` - Block accounting and validator payout primitives
 - `prover_common` - Shared prover config, channel, and hasher type aliases
-- `types` - Witness structs and constants
+- `types` - Witness structs and shared constants
 - `wasm` - Browser bindings via wasm-bindgen
 
 ## Why hand-rolled Poseidon2
