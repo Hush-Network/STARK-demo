@@ -1,7 +1,13 @@
-//! Credential issuance circuit.
+//! Provenance attestation circuit.
+//!
+//! Proves that a private note carries a valid attestation signed by an
+//! approved boundary actor (exchange, bridge, issuer, PSP, merchant) at
+//! screened entry. Encoded historically as an issuer-keyed credential
+//! commitment with Merkle inclusion in the boundary actor set; the field
+//! and helper names retain that encoding for now.
 //!
 //! All hash outputs are `HashOut = [M31; 4]` (4 x M31, ~124-bit collision resistance).
-//! Credential commitment uses a 2-block sponge (10 inputs: issuer[4], owner[4], expiry, secret).
+//! Attestation commitment uses a 2-block sponge (10 inputs: issuer[4], owner[4], expiry, secret).
 //! Merkle siblings are HashOut; `constrain_hash_pair` hashes 8 rate elements per level.
 
 use num_traits::{One, Zero};
@@ -56,7 +62,7 @@ const NUM_COLS: usize = 15
     + MERKLE_DEPTH * MERKLE_LEVEL_COLS;
 
 #[derive(Clone, Debug)]
-pub struct IssuanceWitness {
+pub struct AttestationWitness {
     pub issuer_root: [u32; 4],
     pub credential_commitment: [u32; 4],
     pub issuer_key: u32,
@@ -180,7 +186,7 @@ impl IssuancePublicData {
     }
 }
 
-pub fn prove_issuance(witness: &IssuanceWitness) -> Result<(), String> {
+pub fn prove_provenance_attestation(witness: &AttestationWitness) -> Result<(), String> {
     let log_num_rows = LOG_N_LANES;
     let num_rows = 1 << log_num_rows;
 
@@ -396,7 +402,7 @@ mod tests {
         let issuer_root = issuer_tree.root();
         let path_vec = issuer_tree.path(0);
 
-        let witness = IssuanceWitness {
+        let witness = AttestationWitness {
             issuer_root: poseidon2::hashout_to_u32_array(issuer_root),
             credential_commitment: poseidon2::hashout_to_u32_array(cm),
             issuer_key: 42,
@@ -406,7 +412,7 @@ mod tests {
             issuer_path: path_to_witness(&path_vec),
         };
 
-        prove_issuance(&witness).expect("Issuance should succeed");
+        prove_provenance_attestation(&witness).expect("Issuance should succeed");
     }
 
     #[test]
@@ -426,7 +432,7 @@ mod tests {
         let bad_root = empty_tree.root();
         let path_vec = empty_tree.path(0);
 
-        let witness = IssuanceWitness {
+        let witness = AttestationWitness {
             issuer_root: poseidon2::hashout_to_u32_array(bad_root),
             credential_commitment: poseidon2::hashout_to_u32_array(cm),
             issuer_key: 42,
@@ -436,7 +442,7 @@ mod tests {
             issuer_path: path_to_witness(&path_vec),
         };
 
-        match prove_issuance(&witness) {
+        match prove_provenance_attestation(&witness) {
             Err(e) => assert!(e.contains("authorized issuer set"), "Got: {e}"),
             Ok(_) => panic!("Should have rejected unauthorized issuer"),
         }

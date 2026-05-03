@@ -28,31 +28,13 @@ fn validate_f64_amount(v: f64, name: &str) -> Result<u64, String> {
     Ok(v as u64)
 }
 
-/// Generate a random u32 in [1, 2^31 - 1] (valid M31 range).
-/// The demo should still use a real RNG so commitment randomness is not predictable
-/// or trivially reusable across sessions. Production wallets still need stronger
-/// key management and wallet-specific entropy handling beyond this helper.
-fn demo_random_u32() -> u32 {
-    let mut bytes = [0u8; 4];
-    getrandom::getrandom(&mut bytes).expect("secure randomness should be available");
-    let sample = u32::from_le_bytes(bytes) & 0x7fff_ffff;
-    if sample == 0 {
-        1
-    } else {
-        sample
-    }
-}
-
 use crate::{
-    circuit, credential_issuance,
+    circuit,
     dual_fee_runtime::{
-        dual_fee_review_snapshot, quote_payment, submit_wallet_payment, WalletQuoteRequest,
-        WalletSubmissionRequest,
+        quote_payment, submit_wallet_payment, WalletQuoteRequest, WalletSubmissionRequest,
     },
-    payment_tx::{
-        compute_mode_a_tx_binding_hash, derive_sender_binding_tag, PAYMENT_TX_V1_REPLAY_DOMAIN,
-    },
-    types::{PaymentWitness, MERKLE_DEPTH},
+    payment_tx::compute_mode_a_tx_binding_hash,
+    provenance_attestation,
 };
 
 #[wasm_bindgen]
@@ -165,35 +147,6 @@ impl ProofOutput {
     }
 }
 
-/// Parse a flat array of 5 * MERKLE_DEPTH u32s into a Merkle path.
-/// Each level is encoded as [sibling[0], sibling[1], sibling[2], sibling[3], direction].
-fn parse_merkle_path(flat: &[u32]) -> [([u32; 4], u32); MERKLE_DEPTH] {
-    let mut path = [([0u32; 4], 0u32); MERKLE_DEPTH];
-    for i in 0..MERKLE_DEPTH {
-        let base = 5 * i;
-        path[i] = ([flat[base], flat[base + 1], flat[base + 2], flat[base + 3]], flat[base + 4]);
-    }
-    path
-}
-
-fn error_output(message: String, prove_time_ms: f64) -> ProofOutput {
-    ProofOutput {
-        success: false,
-        message,
-        prove_time_ms,
-        verify_time_ms: 0.0,
-        null_0: [0; 4],
-        null_1: [0; 4],
-        out_cm_0: [0; 4],
-        out_cm_1: [0; 4],
-        proof_bytes: String::new(),
-        note_root: [0; 4],
-        accumulator_root: [0; 4],
-        epoch: 0,
-        log_num_rows: 0,
-    }
-}
-
 fn json_result<T: Serialize>(result: Result<T, String>) -> String {
     match result {
         Ok(data) => serde_json::json!({ "ok": true, "data": data }).to_string(),
@@ -203,15 +156,6 @@ fn json_result<T: Serialize>(result: Result<T, String>) -> String {
 
 fn json_error(msg: &str) -> String {
     serde_json::json!({ "ok": false, "error": msg }).to_string()
-}
-
-#[wasm_bindgen]
-pub fn dual_fee_review_json() -> String {
-    serde_json::json!({
-        "ok": true,
-        "data": dual_fee_review_snapshot(),
-    })
-    .to_string()
 }
 
 /// Binding preimage for tx_binding_hash recomputation.
@@ -257,20 +201,6 @@ pub fn recompute_tx_binding_hash_json(binding_json: &str) -> String {
         b.sender_change_randomness,
     );
     serde_json::json!({ "hash": hash }).to_string()
-}
-
-#[wasm_bindgen]
-pub fn dual_fee_quote_payment_json(payment_asset: u32, fee_asset: u32, amount: f64) -> String {
-    let amount = match validate_f64_amount(amount, "amount") {
-        Ok(v) => v,
-        Err(e) => return json_error(&e),
-    };
-    json_result(quote_payment(&WalletQuoteRequest {
-        payment_asset,
-        fee_asset,
-        amount,
-        fee_schedule_version: crate::payment_tx::PAYMENT_FEE_SCHEDULE_STANDARD,
-    }))
 }
 
 #[wasm_bindgen]
@@ -325,159 +255,6 @@ pub fn dual_fee_submit_demo_payment_json(
         hush_balance,
         credential_expiry: (credential_expiry != 0).then_some(credential_expiry),
     }))
-}
-
-#[wasm_bindgen]
-pub fn prove_and_verify(
-    epoch: u32,
-    note_root: &[u32],
-    sk: u32,
-    in_asset: u32,
-    in_amt_0: f64,
-    in_rand_0: u32,
-    in_amt_1: f64,
-    in_rand_1: u32,
-    out_amt_0: f64,
-    out_owner_0: &[u32],
-    out_rand_0: u32,
-    out_amt_1: f64,
-    out_rand_1: u32,
-    note_path_0_flat: &[u32],
-    note_path_1_flat: &[u32],
-) -> ProofOutput {
-    let path_len = 5 * MERKLE_DEPTH;
-    if note_path_0_flat.len() != path_len || note_path_1_flat.len() != path_len {
-        return error_output(
-            format!("Merkle paths must each have {path_len} elements (5 per level)"),
-            0.0,
-        );
-    }
-    if note_root.len() != 4 || out_owner_0.len() != 4 {
-        return error_output(
-            "note_root and out_owner_0 must each have 4 elements".to_string(),
-            0.0,
-        );
-    }
-    let note_root: [u32; 4] = [note_root[0], note_root[1], note_root[2], note_root[3]];
-    let out_owner_0: [u32; 4] = [out_owner_0[0], out_owner_0[1], out_owner_0[2], out_owner_0[3]];
-
-    let in_amt_0 = match validate_f64_amount(in_amt_0, "in_amt_0") {
-        Ok(v) => v,
-        Err(e) => return error_output(e, 0.0),
-    };
-    let in_amt_1 = match validate_f64_amount(in_amt_1, "in_amt_1") {
-        Ok(v) => v,
-        Err(e) => return error_output(e, 0.0),
-    };
-    let out_amt_0 = match validate_f64_amount(out_amt_0, "out_amt_0") {
-        Ok(v) => v,
-        Err(e) => return error_output(e, 0.0),
-    };
-    let out_amt_1 = match validate_f64_amount(out_amt_1, "out_amt_1") {
-        Ok(v) => v,
-        Err(e) => return error_output(e, 0.0),
-    };
-
-    let tx_binding_hash = compute_mode_a_tx_binding_hash(
-        PAYMENT_TX_V1_REPLAY_DOMAIN,
-        in_asset,
-        in_asset,
-        1,
-        0,
-        1,
-        out_amt_0,
-        out_owner_0,
-        out_rand_0,
-        out_amt_1,
-        out_rand_1,
-    );
-    // Unregulated notes: all-zeros attestation_root sentinel and empty accumulator.
-    let witness = PaymentWitness {
-        epoch,
-        note_root,
-        sk,
-        in_asset,
-        in_amt_0,
-        in_rand_0,
-        in_amt_1,
-        in_rand_1,
-        out_amt_0,
-        out_owner_0,
-        out_rand_0,
-        out_amt_1,
-        out_rand_1,
-        payment_fee_amount: 0,
-        binding_fee_asset: in_asset,
-        fee_amount: 0,
-        fee_class: 1,
-        fee_schedule_version: 1,
-        replay_domain: PAYMENT_TX_V1_REPLAY_DOMAIN,
-        tx_binding_hash,
-        sender_binding_tag: derive_sender_binding_tag(sk, tx_binding_hash),
-        att_root_0: [0u32; 4],
-        att_root_1: [0u32; 4],
-        pub_accumulator_root: [0u32; 4],
-        note_path_0: parse_merkle_path(note_path_0_flat),
-        note_path_1: parse_merkle_path(note_path_1_flat),
-    };
-
-    // Prove
-    let prove_start = js_sys::Date::now();
-    let proof_result = match circuit::prove_payment(&witness) {
-        Ok(r) => r,
-        Err(e) => {
-            return error_output(e, js_sys::Date::now() - prove_start);
-        }
-    };
-    let prove_time = js_sys::Date::now() - prove_start;
-
-    let pd = &proof_result.public_data;
-    let null_0 = pd.null_0;
-    let null_1 = pd.null_1;
-    let out_cm_0 = pd.out_cm_0;
-    let out_cm_1 = pd.out_cm_1;
-    let accumulator_root = pd.accumulator_root;
-
-    // Serialize proof for independent verification
-    let serialized = serde_json::to_string(&proof_result.proof).unwrap_or_else(|_| String::new());
-    let proof_bytes = use_base64_encode(&serialized);
-
-    let log_num_rows = proof_result.log_num_rows;
-
-    // Verify
-    let verify_start = js_sys::Date::now();
-    match circuit::verify_payment(&proof_result) {
-        Ok(()) => ProofOutput {
-            success: true,
-            message: "STARK proof verified successfully".to_string(),
-            prove_time_ms: prove_time,
-            verify_time_ms: js_sys::Date::now() - verify_start,
-            null_0,
-            null_1,
-            out_cm_0,
-            out_cm_1,
-            accumulator_root,
-            proof_bytes,
-            note_root: witness.note_root,
-            epoch: witness.epoch,
-            log_num_rows,
-        },
-        Err(e) => ProofOutput {
-            success: false,
-            message: format!("Proof generated but verification failed: {e}"),
-            prove_time_ms: prove_time,
-            verify_time_ms: js_sys::Date::now() - verify_start,
-            null_0: [0; 4],
-            null_1: [0; 4],
-            out_cm_0: [0; 4],
-            out_cm_1: [0; 4],
-            accumulator_root: [0; 4],
-            proof_bytes: String::new(),
-            note_root: [0; 4],
-            epoch: 0,
-            log_num_rows: 0,
-        },
-    }
 }
 
 fn use_base64_encode(s: &str) -> String {
@@ -615,7 +392,7 @@ impl CredentialIssuanceOutput {
 }
 
 #[wasm_bindgen]
-pub fn prove_demo_credential_issuance(
+pub fn prove_demo_provenance_attestation(
     sk: u32,
     issuer_key: u32,
     expiry: u32,
@@ -645,7 +422,7 @@ pub fn prove_demo_credential_issuance(
         issuer_path[i] = (poseidon2::hashout_to_u32_array(*sib), *dir);
     }
 
-    let witness = credential_issuance::IssuanceWitness {
+    let witness = provenance_attestation::AttestationWitness {
         issuer_root,
         credential_commitment,
         issuer_key,
@@ -655,7 +432,7 @@ pub fn prove_demo_credential_issuance(
         issuer_path,
     };
 
-    match credential_issuance::prove_issuance(&witness) {
+    match provenance_attestation::prove_provenance_attestation(&witness) {
         Ok(()) => CredentialIssuanceOutput {
             success: true,
             message: "Credential issuance proof verified".to_string(),
@@ -897,181 +674,6 @@ pub fn verify_audit_proof(
     }
 }
 
-/// High-level wrapper for the browser demo: takes simple payment parameters,
-/// computes randomness, builds Merkle trees and paths internally, proves and verifies.
-/// Returns a ProofOutput including proof_bytes for independent verification.
-#[wasm_bindgen]
-pub fn build_witness_and_prove(
-    epoch: u32,
-    sk: u32,
-    in_asset: u32,
-    in_amt_0: f64,
-    in_amt_1: f64,
-    out_amt_0: f64,
-    out_owner_0: &[u32],
-    out_amt_1: f64,
-) -> ProofOutput {
-    use stwo::core::fields::m31::M31;
-
-    use crate::poseidon2;
-
-    if out_owner_0.len() != 4 {
-        return error_output("out_owner_0 must have 4 elements".to_string(), 0.0);
-    }
-    let out_owner_0: [u32; 4] = [out_owner_0[0], out_owner_0[1], out_owner_0[2], out_owner_0[3]];
-
-    let in_amt_0 = match validate_f64_amount(in_amt_0, "in_amt_0") {
-        Ok(v) => v,
-        Err(e) => return error_output(e, 0.0),
-    };
-    let in_amt_1 = match validate_f64_amount(in_amt_1, "in_amt_1") {
-        Ok(v) => v,
-        Err(e) => return error_output(e, 0.0),
-    };
-    let out_amt_0 = match validate_f64_amount(out_amt_0, "out_amt_0") {
-        Ok(v) => v,
-        Err(e) => return error_output(e, 0.0),
-    };
-    let out_amt_1 = match validate_f64_amount(out_amt_1, "out_amt_1") {
-        Ok(v) => v,
-        Err(e) => return error_output(e, 0.0),
-    };
-
-    // Generate per-transaction randomness from the browser RNG bridge.
-    let in_rand_0 = demo_random_u32();
-    let in_rand_1 = demo_random_u32();
-    let out_rand_0 = demo_random_u32();
-    let out_rand_1 = demo_random_u32();
-
-    // Derive owner
-    let owner = poseidon2::derive_owner(M31::from(sk));
-    let asset = M31::from(in_asset);
-    // Unregulated notes: all-zeros attestation_root sentinel
-    let att_root_zero = [M31::from(0u32); 4];
-
-    // Compute note commitments (14-input: includes att_root)
-    let cm0 =
-        poseidon2::note_commitment_u64(asset, in_amt_0, owner, M31::from(in_rand_0), att_root_zero);
-    let cm1 =
-        poseidon2::note_commitment_u64(asset, in_amt_1, owner, M31::from(in_rand_1), att_root_zero);
-
-    // Build note Merkle tree and extract paths
-    let mut note_tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
-    note_tree.set_leaf(0, cm0);
-    note_tree.set_leaf(1, cm1);
-    let note_root = poseidon2::hashout_to_u32_array(note_tree.root());
-
-    let note_path_0_pairs = note_tree.path(0);
-    let note_path_1_pairs = note_tree.path(1);
-
-    let mut note_path_0 = [([0u32; 4], 0u32); MERKLE_DEPTH];
-    for (i, (sib, dir)) in note_path_0_pairs.iter().enumerate() {
-        note_path_0[i] = (poseidon2::hashout_to_u32_array(*sib), *dir);
-    }
-    let mut note_path_1 = [([0u32; 4], 0u32); MERKLE_DEPTH];
-    for (i, (sib, dir)) in note_path_1_pairs.iter().enumerate() {
-        note_path_1[i] = (poseidon2::hashout_to_u32_array(*sib), *dir);
-    }
-
-    // Assemble witness
-    let tx_binding_hash = compute_mode_a_tx_binding_hash(
-        PAYMENT_TX_V1_REPLAY_DOMAIN,
-        in_asset,
-        in_asset,
-        1,
-        0u64,
-        1,
-        out_amt_0,
-        out_owner_0,
-        out_rand_0,
-        out_amt_1,
-        out_rand_1,
-    );
-    let witness = crate::types::PaymentWitness {
-        epoch,
-        note_root,
-        sk,
-        in_asset,
-        in_amt_0,
-        in_rand_0,
-        in_amt_1,
-        in_rand_1,
-        out_amt_0,
-        out_owner_0,
-        out_rand_0,
-        out_amt_1,
-        out_rand_1,
-        payment_fee_amount: 0,
-        binding_fee_asset: in_asset,
-        fee_amount: 0,
-        fee_class: 1,
-        fee_schedule_version: 1,
-        replay_domain: PAYMENT_TX_V1_REPLAY_DOMAIN,
-        tx_binding_hash,
-        sender_binding_tag: derive_sender_binding_tag(sk, tx_binding_hash),
-        att_root_0: [0u32; 4],
-        att_root_1: [0u32; 4],
-        pub_accumulator_root: [0u32; 4],
-        note_path_0,
-        note_path_1,
-    };
-
-    // Prove
-    let prove_start = js_sys::Date::now();
-    let proof_result = match circuit::prove_payment(&witness) {
-        Ok(r) => r,
-        Err(e) => return error_output(e, js_sys::Date::now() - prove_start),
-    };
-    let prove_time = js_sys::Date::now() - prove_start;
-
-    let pd = &proof_result.public_data;
-    let null_0 = pd.null_0;
-    let null_1 = pd.null_1;
-    let out_cm_0 = pd.out_cm_0;
-    let out_cm_1 = pd.out_cm_1;
-    let accumulator_root = pd.accumulator_root;
-
-    // Serialize proof for independent verification
-    let serialized = serde_json::to_string(&proof_result.proof).unwrap_or_else(|_| String::new());
-    let proof_bytes = use_base64_encode(&serialized);
-    let log_num_rows = proof_result.log_num_rows;
-
-    // Verify
-    let verify_start = js_sys::Date::now();
-    match circuit::verify_payment(&proof_result) {
-        Ok(()) => ProofOutput {
-            success: true,
-            message: "STARK proof verified successfully".to_string(),
-            prove_time_ms: prove_time,
-            verify_time_ms: js_sys::Date::now() - verify_start,
-            null_0,
-            null_1,
-            out_cm_0,
-            out_cm_1,
-            accumulator_root,
-            proof_bytes,
-            note_root: witness.note_root,
-            epoch: witness.epoch,
-            log_num_rows,
-        },
-        Err(e) => ProofOutput {
-            success: false,
-            message: format!("Proof generated but verification failed: {e}"),
-            prove_time_ms: prove_time,
-            verify_time_ms: js_sys::Date::now() - verify_start,
-            null_0: [0; 4],
-            null_1: [0; 4],
-            out_cm_0: [0; 4],
-            out_cm_1: [0; 4],
-            accumulator_root: [0; 4],
-            proof_bytes: String::new(),
-            note_root: [0; 4],
-            epoch: 0,
-            log_num_rows: 0,
-        },
-    }
-}
-
 /// Verify a serialized STARK proof against its public outputs.
 /// proof_b64: base64-encoded JSON of the serialized StarkProof.
 /// log_num_rows: the trace height exponent used when the proof was generated.
@@ -1237,100 +839,4 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, &'static str> {
         i += 4;
     }
     Ok(out)
-}
-
-#[wasm_bindgen]
-pub fn compute_credential_root(sk: u32, issuer: u32, expiry: u32, secret: u32) -> Vec<u32> {
-    use stwo::core::fields::m31::M31;
-
-    use crate::poseidon2;
-
-    let owner = poseidon2::derive_owner(M31::from(sk));
-    let issuer_id = poseidon2::derive_issuer_id(M31::from(issuer));
-    let cred_cm =
-        poseidon2::credential_commitment(issuer_id, owner, M31::from(expiry), M31::from(secret));
-    let mut tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
-    tree.set_leaf(0, cred_cm);
-    let root = poseidon2::hashout_to_u32_array(tree.root());
-    root.to_vec()
-}
-
-#[wasm_bindgen]
-pub fn compute_note_root(
-    sk: u32,
-    in_asset: u32,
-    in_amt_0: f64,
-    in_rand_0: u32,
-    in_amt_1: f64,
-    in_rand_1: u32,
-) -> Result<Vec<u32>, wasm_bindgen::JsError> {
-    use stwo::core::fields::m31::M31;
-
-    use crate::poseidon2;
-
-    let in_amt_0 =
-        validate_f64_amount(in_amt_0, "in_amt_0").map_err(|e| wasm_bindgen::JsError::new(&e))?;
-    let in_amt_1 =
-        validate_f64_amount(in_amt_1, "in_amt_1").map_err(|e| wasm_bindgen::JsError::new(&e))?;
-
-    let owner = poseidon2::derive_owner(M31::from(sk));
-    let asset = M31::from(in_asset);
-    // Unregulated notes: all-zeros attestation_root sentinel
-    let att_root_zero = [M31::from(0u32); 4];
-    let cm0 =
-        poseidon2::note_commitment_u64(asset, in_amt_0, owner, M31::from(in_rand_0), att_root_zero);
-    let cm1 =
-        poseidon2::note_commitment_u64(asset, in_amt_1, owner, M31::from(in_rand_1), att_root_zero);
-    let mut tree = poseidon2::SparseMerkleTree::new(MERKLE_DEPTH);
-    tree.set_leaf(0, cm0);
-    tree.set_leaf(1, cm1);
-    let root = poseidon2::hashout_to_u32_array(tree.root());
-    Ok(root.to_vec())
-}
-
-#[wasm_bindgen]
-pub fn compute_merkle_path(
-    leaf_index: usize,
-    leaf_values_flat: &[u32],
-) -> Result<Vec<u32>, wasm_bindgen::JsError> {
-    use crate::poseidon2;
-
-    // Each leaf is 4 u32s (HashOut)
-    if !leaf_values_flat.len().is_multiple_of(4) {
-        return Err(wasm_bindgen::JsError::new(
-            "leaf_values_flat must have a multiple of 4 elements",
-        ));
-    }
-    let num_leaves = leaf_values_flat.len() / 4;
-    if num_leaves == 0 {
-        return Err(wasm_bindgen::JsError::new("leaf_values_flat is empty"));
-    }
-    if leaf_index >= num_leaves {
-        return Err(wasm_bindgen::JsError::new(&format!(
-            "leaf_index ({leaf_index}) out of range (0..{num_leaves})"
-        )));
-    }
-    let leaves: Vec<poseidon2::HashOut> = (0..num_leaves)
-        .map(|i| {
-            let base = i * 4;
-            poseidon2::u32_array_to_hashout([
-                leaf_values_flat[base],
-                leaf_values_flat[base + 1],
-                leaf_values_flat[base + 2],
-                leaf_values_flat[base + 3],
-            ])
-        })
-        .collect();
-    let tree = poseidon2::build_merkle_tree(&leaves);
-    let path = poseidon2::merkle_path(&tree, leaf_index);
-    let mut flat = Vec::with_capacity(5 * MERKLE_DEPTH);
-    for (sibling, dir) in &path {
-        let arr = poseidon2::hashout_to_u32_array(*sibling);
-        flat.push(arr[0]);
-        flat.push(arr[1]);
-        flat.push(arr[2]);
-        flat.push(arr[3]);
-        flat.push(*dir);
-    }
-    Ok(flat)
 }

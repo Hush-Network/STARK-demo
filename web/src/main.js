@@ -2,7 +2,7 @@ import './wallet.css';
 import init, {
   dual_fee_quote_payment_with_schedule_json,
   dual_fee_submit_demo_payment_json,
-  prove_demo_credential_issuance,
+  prove_demo_provenance_attestation,
   prove_time_window_audit,
 } from '../pkg/hush_demo_stark.js';
 import {
@@ -131,7 +131,7 @@ async function boot() {
   await Promise.all([init(), minimumSplash]);
   wasmReady = true;
   try {
-    state.provenanceProof = prove_demo_credential_issuance(SK, CRED_ISSUER, CRED_EXPIRY, CRED_SECRET);
+    state.provenanceProof = prove_demo_provenance_attestation(SK, CRED_ISSUER, CRED_EXPIRY, CRED_SECRET);
   } catch (error) {
     console.error('Provenance attestation proof unavailable:', error);
   }
@@ -745,12 +745,11 @@ async function sendPayment() {
           null_1: fmtHash4(paymentProof.null_1),
           out_cm_0: fmtHash4(paymentProof.out_cm_0),
           out_cm_1: fmtHash4(paymentProof.out_cm_1),
-          cred_null: fmtHash4(paymentProof.cred_null),
           prove_ms: Math.round(paymentProof.prove_time_ms),
           verify_ms: Math.round(paymentProof.verify_time_ms),
           proof_bytes: paymentProof.proof_bytes,
           note_root: fmtHash4(paymentProof.note_root),
-          cred_root: fmtHash4(paymentProof.cred_root),
+          accumulator_root: fmtHash4(paymentProof.accumulator_root),
           epoch: paymentProof.epoch,
           tx_binding_hash: fmtHash4(paymentProof.tx_binding_hash),
           sender_binding_tag: fmtHash4(paymentProof.sender_binding_tag),

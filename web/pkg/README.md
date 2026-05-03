@@ -125,7 +125,7 @@ Fixed-width amount encoding means payment size does not change the circuit shape
 
 ## Tests
 
-116 tests covering:
+`cargo test` covers:
 - Valid proof generation and verification for all three circuits
 - Balance conservation rejection (mismatched inputs/outputs)
 - Nullifier reuse rejection (double-spend prevention)
@@ -150,19 +150,26 @@ Fixed-width amount encoding means payment size does not change the circuit shape
 
 ```
 src/
-  circuit.rs              Payment circuit (2-in-2-out, with provenance + non-revocation check)
-  credential_issuance.rs  Provenance attestation circuit (file name kept for compatibility)
-  time_window.rs          Time-window audit circuit
-  poseidon2.rs            Poseidon2 hash (M31, width-16, domain-separated)
-  poseidon2_air.rs        Poseidon2 AIR constraints
-  types.rs                Witness types
-  wasm.rs                 WASM bindings (compiled to power the browser demo)
-  prover_common.rs        Shared prover utilities
+  circuit.rs                Payment circuit (2-in-2-out, with provenance + non-revocation check)
+  provenance_attestation.rs Provenance attestation circuit
+  time_window.rs            Time-window audit circuit
+  poseidon2.rs              Poseidon2 hash (M31, width-16, domain-separated)
+  poseidon2_air.rs          Poseidon2 AIR constraints
+  payment_tx.rs             Canonical payment transaction encoding and binding hash
+  payment_validation.rs     Payment + fee bundle validation
+  payment_fixtures.rs       Shared fixtures for tests, lifecycle, and bench
+  fee_sidecar.rs            HUSH fee sidecar circuit
+  dual_fee_runtime.rs       Quote/submit runtime for the dual-fee model
+  accounting.rs             Block accounting and validator payout primitives
+  measurement.rs            Duration/timing helpers
+  types.rs                  Witness types and shared constants
+  wasm.rs                   WASM bindings (compiled to power the browser demo)
+  prover_common.rs          Shared prover utilities
   bin/
-    bench.rs              Benchmark suite
-    lifecycle.rs          Full protocol flow demo
+    bench.rs                Benchmark suite
+    lifecycle.rs            Full protocol flow demo
 docs/
-  architecture.md         Circuit architecture and proving notes
+  architecture.md           Circuit architecture and proving notes
 benchmarks/
   BENCHMARK_REPORT_2026-04-17.md  Latest benchmark run: native and parallel refresh, plus current WASM note
   BENCHMARK_REPORT_2026-04-07.md  Prior benchmark snapshot

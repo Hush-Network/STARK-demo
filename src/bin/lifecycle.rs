@@ -5,11 +5,11 @@
 use std::collections::HashSet;
 
 use hush_demo_stark::{
-    circuit, credential_issuance,
+    circuit,
     payment_tx::{
         compute_mode_a_tx_binding_hash, derive_sender_binding_tag, PAYMENT_TX_V1_REPLAY_DOMAIN,
     },
-    poseidon2, time_window,
+    poseidon2, provenance_attestation, time_window,
     types::{PaymentWitness, MERKLE_DEPTH},
 };
 use stwo::core::fields::m31::M31;
@@ -174,8 +174,8 @@ fn main() {
     println!("  Issuer ID: {} (derived from key)", fmt_hashout_m31(issuer_id));
     println!("  Issuer tree root: {}", fmt_hashout_m31(ledger.issuer_tree.root()));
 
-    // --- Step 2: Credential issuance (CIRCUIT 1) ---
-    println!("\nStep 2: Credential issuance circuit");
+    // --- Step 2: Provenance attestation (CIRCUIT 1) ---
+    println!("\nStep 2: Provenance attestation circuit");
     let alice_sk = 12345u32;
     let alice_owner = poseidon2::derive_owner(M31::from(alice_sk));
     let cred_expiry = 2000u32;
@@ -194,7 +194,7 @@ fn main() {
             (poseidon2::hashout_to_u32_array(issuer_path_vec[i].0), issuer_path_vec[i].1);
     }
 
-    let issuance_witness = credential_issuance::IssuanceWitness {
+    let issuance_witness = provenance_attestation::AttestationWitness {
         issuer_root: poseidon2::hashout_to_u32_array(ledger.issuer_tree.root()),
         credential_commitment: poseidon2::hashout_to_u32_array(cred_cm),
         issuer_key,
@@ -204,9 +204,10 @@ fn main() {
         issuer_path,
     };
 
-    print!("  Proving credential issuance... ");
+    print!("  Proving provenance attestation... ");
     let start = std::time::Instant::now();
-    credential_issuance::prove_issuance(&issuance_witness).expect("Issuance proof failed");
+    provenance_attestation::prove_provenance_attestation(&issuance_witness)
+        .expect("Provenance attestation proof failed");
     println!("done ({} ms, proved + verified)", start.elapsed().as_millis());
     println!("  Credential commitment: {}", fmt_hashout_m31(cred_cm));
 
@@ -378,7 +379,7 @@ fn main() {
 
     println!("\n=== Protocol Lifecycle Complete ===");
     println!("Demonstrated:");
-    println!("  1. Credential issuance (issuer authorization via Merkle proof)");
+    println!("  1. Provenance attestation (boundary actor authorization via Merkle proof)");
     println!("  2. First payment (2-in-2-out, provenance continuity enforced circuit-side)");
     println!("  3. Second payment (spending change output, state continuity)");
     println!("  4. Time-window audit (aggregate disclosure without individual tx reveal)");

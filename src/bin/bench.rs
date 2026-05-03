@@ -5,11 +5,11 @@ use hush_demo_stark::{
         accepted_payment_record, accepted_protocol_action_record, BlockAccountingBuilder,
         EpochAccumulator, ProtocolActionTx, ValidatorBlockParticipation, ValidatorStakeInfo,
     },
-    circuit, credential_issuance,
+    circuit,
     measurement::{duration_to_ms, format_duration_ms},
     payment_fixtures::{valid_usdc_hush_fee_fixture, valid_usdc_same_asset_fixture},
     payment_tx::TxKind,
-    payment_validation, poseidon2, time_window,
+    payment_validation, poseidon2, provenance_attestation, time_window,
     types::MERKLE_DEPTH,
 };
 use stwo::core::fields::m31::M31;
@@ -229,7 +229,7 @@ fn bench_payout_generation() -> (f64, f64, f64) {
     stats(&times)
 }
 
-fn bench_credential_issuance() -> (f64, f64, f64) {
+fn bench_provenance_attestation() -> (f64, f64, f64) {
     let issuer_key = M31::from(42u32);
     let issuer_id = poseidon2::derive_issuer_id(issuer_key);
     let subject = poseidon2::derive_owner(M31::from(12345u32));
@@ -244,7 +244,7 @@ fn bench_credential_issuance() -> (f64, f64, f64) {
         issuer_path[i] = (poseidon2::hashout_to_u32_array(path_vec[i].0), path_vec[i].1);
     }
 
-    let witness = credential_issuance::IssuanceWitness {
+    let witness = provenance_attestation::AttestationWitness {
         issuer_root: poseidon2::hashout_to_u32_array(issuer_tree.root()),
         credential_commitment: poseidon2::hashout_to_u32_array(cm),
         issuer_key: 42,
@@ -257,7 +257,7 @@ fn bench_credential_issuance() -> (f64, f64, f64) {
     let mut times = Vec::new();
     for _ in 0..ITERATIONS {
         let start = Instant::now();
-        credential_issuance::prove_issuance(&witness).unwrap();
+        provenance_attestation::prove_provenance_attestation(&witness).unwrap();
         times.push(duration_to_ms(start.elapsed()));
     }
     stats(&times)
@@ -330,7 +330,7 @@ fn main() {
     let accounting_accept = bench_accounting_accept();
     let epoch_accrual = bench_epoch_accrual();
     let payout_generation = bench_payout_generation();
-    let issuance = bench_credential_issuance();
+    let issuance = bench_provenance_attestation();
     let tw = bench_time_window();
 
     println!("| Circuit             | Prove (avg)  | Prove (min)  | Prove (max)  | Verify (avg) |");
@@ -361,7 +361,7 @@ fn main() {
     );
     println!(
         "| {:<19} | {} | {} | {} | {:>11} |",
-        "Credential Issuance",
+        "Provenance Attest.",
         timing_cell(issuance.1),
         timing_cell(issuance.0),
         timing_cell(issuance.2),

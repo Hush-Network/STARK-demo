@@ -98,6 +98,10 @@ pub struct PaymentProofView {
     pub prove_time_ms: f64,
     pub verify_time_ms: f64,
     pub proof_bytes: String,
+    /// Trace shape used when the proof was generated. Required by
+    /// `verify_serialized_proof` so receipt verifiers can reconstruct
+    /// the FRI parameters without rerunning the prover.
+    pub log_num_rows: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -429,6 +433,7 @@ fn payment_proof_view(
         prove_time_ms,
         verify_time_ms,
         proof_bytes: base64_encode(&serialized),
+        log_num_rows: bundle.payment.log_num_rows,
     })
 }
 

@@ -50,30 +50,11 @@ export class ProofOutput {
     readonly verify_time_ms: number;
 }
 
-/**
- * High-level wrapper for the browser demo: takes simple payment parameters,
- * computes randomness, builds Merkle trees and paths internally, proves and verifies.
- * Returns a ProofOutput including proof_bytes for independent verification.
- */
-export function build_witness_and_prove(epoch: number, sk: number, in_asset: number, in_amt_0: number, in_amt_1: number, out_amt_0: number, out_owner_0: Uint32Array, out_amt_1: number): ProofOutput;
-
-export function compute_credential_root(sk: number, issuer: number, expiry: number, secret: number): Uint32Array;
-
-export function compute_merkle_path(leaf_index: number, leaf_values_flat: Uint32Array): Uint32Array;
-
-export function compute_note_root(sk: number, in_asset: number, in_amt_0: number, in_rand_0: number, in_amt_1: number, in_rand_1: number): Uint32Array;
-
-export function dual_fee_quote_payment_json(payment_asset: number, fee_asset: number, amount: number): string;
-
 export function dual_fee_quote_payment_with_schedule_json(payment_asset: number, fee_asset: number, amount: number, fee_schedule_version: number): string;
-
-export function dual_fee_review_json(): string;
 
 export function dual_fee_submit_demo_payment_json(payment_asset: number, fee_asset: number, amount: number, fee_schedule_version: number, recipient_owner: number, payment_balance: number, hush_balance: number, credential_expiry: number): string;
 
-export function prove_and_verify(epoch: number, note_root: Uint32Array, sk: number, in_asset: number, in_amt_0: number, in_rand_0: number, in_amt_1: number, in_rand_1: number, out_amt_0: number, out_owner_0: Uint32Array, out_rand_0: number, out_amt_1: number, out_rand_1: number, note_path_0_flat: Uint32Array, note_path_1_flat: Uint32Array): ProofOutput;
-
-export function prove_demo_credential_issuance(sk: number, issuer_key: number, expiry: number, secret: number): CredentialIssuanceOutput;
+export function prove_demo_provenance_attestation(sk: number, issuer_key: number, expiry: number, secret: number): CredentialIssuanceOutput;
 
 /**
  * Proves a time-window audit for the browser demo.
@@ -126,12 +107,9 @@ export interface InitOutput {
     readonly proofoutput_accumulator_root: (a: number, b: number) => void;
     readonly proofoutput_epoch: (a: number) => number;
     readonly proofoutput_log_num_rows: (a: number) => number;
-    readonly dual_fee_review_json: (a: number) => void;
     readonly recompute_tx_binding_hash_json: (a: number, b: number, c: number) => void;
-    readonly dual_fee_quote_payment_json: (a: number, b: number, c: number, d: number) => void;
     readonly dual_fee_quote_payment_with_schedule_json: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly dual_fee_submit_demo_payment_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => void;
-    readonly prove_and_verify: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number) => number;
     readonly __wbg_auditoutput_free: (a: number, b: number) => void;
     readonly auditoutput_success: (a: number) => number;
     readonly auditoutput_message: (a: number, b: number) => void;
@@ -149,19 +127,14 @@ export interface InitOutput {
     readonly credentialissuanceoutput_success: (a: number) => number;
     readonly credentialissuanceoutput_message: (a: number, b: number) => void;
     readonly credentialissuanceoutput_prove_time_ms: (a: number) => number;
-    readonly prove_demo_credential_issuance: (a: number, b: number, c: number, d: number) => number;
+    readonly prove_demo_provenance_attestation: (a: number, b: number, c: number, d: number) => number;
     readonly prove_time_window_audit: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => number;
     readonly verify_audit_proof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
-    readonly build_witness_and_prove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly verify_serialized_proof: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number) => void;
-    readonly compute_credential_root: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly compute_note_root: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly compute_merkle_path: (a: number, b: number, c: number, d: number) => void;
-    readonly __wbindgen_export: (a: number) => void;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
-    readonly __wbindgen_export2: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_export3: (a: number, b: number) => number;
-    readonly __wbindgen_export4: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_export: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_export2: (a: number, b: number) => number;
+    readonly __wbindgen_export3: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_start: () => void;
 }
 

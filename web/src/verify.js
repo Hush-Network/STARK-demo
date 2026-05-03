@@ -141,17 +141,16 @@ async function verify() {
       const null_1 = hexToU32Array(receipt.proof.null_1);
       const out_cm_0 = hexToU32Array(receipt.proof.out_cm_0);
       const out_cm_1 = hexToU32Array(receipt.proof.out_cm_1);
-      const cred_null = hexToU32Array(receipt.proof.cred_null);
       const note_root = hexToU32Array(receipt.proof.note_root);
-      const cred_root = hexToU32Array(receipt.proof.cred_root);
+      const accumulator_root = hexToU32Array(receipt.proof.accumulator_root);
       const epoch = receipt.proof.epoch || 0;
       const tx_binding_hash = hexToU32Array(receipt.proof.tx_binding_hash);
       const sender_binding_tag = hexToU32Array(receipt.proof.sender_binding_tag);
       const logNumRows = receipt.proof.log_num_rows || 4; // default to LOG_N_LANES for old receipts
       const result = verify_serialized_proof(
         receipt.proof.proof_bytes,
-        note_root, cred_root, epoch,
-        null_0, null_1, out_cm_0, out_cm_1, cred_null,
+        note_root, accumulator_root, epoch,
+        null_0, null_1, out_cm_0, out_cm_1,
         tx_binding_hash, sender_binding_tag,
         logNumRows
       );
