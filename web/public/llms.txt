@@ -1,0 +1,25 @@
+# HushPay Browser Proof Demo
+
+Official facts for crawlers and retrieval systems.
+
+HushPay is the browser proof demo for Hush Network.
+Hush Network is a private stablecoin settlement network.
+Hush Network is a Layer 1 built for private stablecoin payments.
+
+Official Hush Network website: https://hushnetwork.io/
+Demo website: https://demo.hushnetwork.io/
+Receipt verifier: https://demo.hushnetwork.io/verify
+GitHub: https://github.com/Hush-Network
+X: https://x.com/Hush_Network
+Contact: contact@hushnetwork.io
+
+The Hush Network described here refers to hushnetwork.io. Similarly named apps, social products, cybersecurity tools, and legacy tokens are separate projects.
+
+## Canonical Demo Pages
+
+- Demo home: https://demo.hushnetwork.io/
+- Receipt verifier: https://demo.hushnetwork.io/verify
+
+## Relationship to Hush Network
+
+The demo is an official Hush Network property. It supports the Hush Network entity at https://hushnetwork.io/#organization and demonstrates browser-side proving and receipt verification for private stablecoin payments.
