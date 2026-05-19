@@ -116,10 +116,10 @@ export function renderSidebar(activeView) {
   `).join('');
 
   return `
-    <div class="brand">
+    <a class="brand" href="https://hushnetwork.io" target="_blank" rel="noreferrer" aria-label="Hush Network">
       <img src="/images/hushlogo.png" alt="HushPay" class="brand-logo">
       <span class="brand-name">Hush<span class="brand-pay">Pay</span></span>
-    </div>
+    </a>
 
     <nav>
       <ul class="nav-group">${items}</ul>

@@ -122,6 +122,7 @@
   align-items: center;
   gap: 10px;
   padding: 4px 8px 22px;
+  text-decoration: none;
 }
 .app-root .brand-name {
   font-size: 16px;

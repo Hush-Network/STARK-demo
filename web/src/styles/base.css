@@ -125,6 +125,12 @@
       color: var(--text-3);
     }
 
+    .splash-copy a {
+      color: var(--text-2);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
     @keyframes pulse {
       0%, 100% { transform: scale(1); opacity: 1; }
       50% { transform: scale(1.04); opacity: 0.92; }
